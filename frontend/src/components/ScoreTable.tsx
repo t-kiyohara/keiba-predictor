@@ -3,6 +3,7 @@ import { Prediction } from '../types';
 interface Props {
   predictions: Prediction[];
   onHorseClick: (horseId: string) => void;
+  selectedHorseId?: string | null;
 }
 
 const ROW_HIGHLIGHT: Record<number, string> = {
@@ -17,7 +18,7 @@ const RANK_BADGE: Record<number, string> = {
   3: 'badge-accent',
 };
 
-export default function ScoreTable({ predictions, onHorseClick }: Props) {
+export default function ScoreTable({ predictions, onHorseClick, selectedHorseId }: Props) {
   // ファクターのキー一覧を取得（全馬共通と想定）
   const factorKeys =
     predictions.length > 0 ? Object.keys(predictions[0].factor_scores) : [];
@@ -28,6 +29,7 @@ export default function ScoreTable({ predictions, onHorseClick }: Props) {
         <thead>
           <tr>
             <th className="w-12">順位</th>
+            <th className="w-10 text-xs opacity-60">馬番*</th>
             <th>馬名</th>
             <th className="text-right">総合</th>
             {factorKeys.map((key) => (
@@ -38,26 +40,37 @@ export default function ScoreTable({ predictions, onHorseClick }: Props) {
           </tr>
         </thead>
         <tbody>
-          {predictions.map((pred) => (
-            <tr
-              key={pred.horse_id}
-              className={`cursor-pointer hover ${ROW_HIGHLIGHT[pred.rank] ?? ''}`}
-              onClick={() => onHorseClick(pred.horse_id)}
-            >
-              <td>
-                <span className={`badge badge-sm ${RANK_BADGE[pred.rank] ?? 'badge-neutral'}`}>
-                  {pred.rank}
-                </span>
-              </td>
-              <td className="font-semibold">{pred.horse_name}</td>
-              <td className="text-right font-bold">{pred.total_score.toFixed(1)}</td>
-              {factorKeys.map((key) => (
-                <td key={key} className="text-right text-xs opacity-80">
-                  {pred.factor_scores[key]?.weighted.toFixed(1) ?? '-'}
+          {predictions.map((pred) => {
+            const isSelected = selectedHorseId === pred.horse_id;
+            return (
+              <tr
+                key={pred.horse_id}
+                className={[
+                  'cursor-pointer transition-all duration-150',
+                  isSelected
+                    ? 'bg-primary/20 ring-1 ring-inset ring-primary/50'
+                    : `hover:bg-base-200 ${ROW_HIGHLIGHT[pred.rank] ?? ''}`,
+                ].join(' ')}
+                onClick={() => onHorseClick(pred.horse_id)}
+              >
+                <td>
+                  <span className={`badge badge-sm ${RANK_BADGE[pred.rank] ?? 'badge-neutral'}`}>
+                    {pred.rank}
+                  </span>
                 </td>
-              ))}
-            </tr>
-          ))}
+                <td className="text-xs opacity-40 font-mono">{pred.rank}</td>
+                <td className={`font-semibold ${isSelected ? 'text-primary' : ''}`}>
+                  {pred.horse_name}
+                </td>
+                <td className="text-right font-bold">{pred.total_score.toFixed(1)}</td>
+                {factorKeys.map((key) => (
+                  <td key={key} className="text-right text-xs opacity-80">
+                    {pred.factor_scores[key]?.weighted.toFixed(1) ?? '-'}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

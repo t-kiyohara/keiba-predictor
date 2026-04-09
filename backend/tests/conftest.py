@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
+from app.database import Base, get_db
+from app.main import app as fastapi_app
 import app.models  # noqa: F401 – register all models with Base
 
 
@@ -48,3 +50,16 @@ def db(engine):
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def client(db):
+    """テスト用 FastAPI TestClient（テスト用DBセッションを注入）"""
+    def override_get_db():
+        try:
+            yield db
+        finally:
+            pass
+    fastapi_app.dependency_overrides[get_db] = override_get_db
+    yield TestClient(fastapi_app)
+    fastapi_app.dependency_overrides.clear()

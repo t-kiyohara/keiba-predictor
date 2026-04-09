@@ -358,3 +358,186 @@ class TestScoringEngine:
 
         # 重複なく同じ件数
         assert count_after_first == count_after_second == 3
+
+
+# ---------------------------------------------------------------------------
+# ファクターテスト: score_jockey（データなし）
+# ---------------------------------------------------------------------------
+
+class TestScoreJockeyNoData:
+    def test_score_jockey_no_data(self, db):
+        """騎手データなし → 50.0 を返す"""
+        _make_jockey(db, "j_nodata_001", "データなし騎手")
+        score = factors.score_jockey(db, "j_nodata_001", "東京", "G1")
+        assert score == 50.0
+
+    def test_score_jockey_no_id(self, db):
+        """jockey_id が空文字の場合 → 50.0 を返す"""
+        score = factors.score_jockey(db, "", "東京", "G1")
+        assert score == 50.0
+
+    def test_score_jockey_none_id(self, db):
+        """jockey_id が None の場合 → 50.0 を返す"""
+        score = factors.score_jockey(db, None, "東京", "G1")
+        assert score == 50.0
+
+
+# ---------------------------------------------------------------------------
+# ファクターテスト: score_trainer（データなし）
+# ---------------------------------------------------------------------------
+
+class TestScoreTrainerNoData:
+    def test_score_trainer_no_data(self, db):
+        """調教師データなし → 50.0 を返す"""
+        _make_trainer(db, "tr_nodata_001", "データなし調教師")
+        score = factors.score_trainer(db, "tr_nodata_001", "阪神", "G2")
+        assert score == 50.0
+
+    def test_score_trainer_no_id(self, db):
+        """trainer_id が空文字の場合 → 50.0 を返す"""
+        score = factors.score_trainer(db, "", "阪神", "G2")
+        assert score == 50.0
+
+    def test_score_trainer_none_id(self, db):
+        """trainer_id が None の場合 → 50.0 を返す"""
+        score = factors.score_trainer(db, None, "阪神", "G2")
+        assert score == 50.0
+
+
+# ---------------------------------------------------------------------------
+# ファクターテスト: score_bloodline（データなし）
+# ---------------------------------------------------------------------------
+
+class TestScoreBloodlineNoData:
+    def test_score_bloodline_no_data(self, db):
+        """血統データなし（父なし馬）→ 50.0 を返す"""
+        horse = _make_horse(db, "h_bl_nodata", name="無血統馬", sire=None, dam_sire=None)
+        score = factors.score_bloodline(db, horse.id, "東京", 2000, "芝")
+        assert score == 50.0
+
+    def test_score_bloodline_no_siblings(self, db):
+        """同じ父を持つ兄弟馬がいない場合 → 50.0 を返す"""
+        horse = _make_horse(db, "h_bl_alone", name="孤独馬", sire="ユニーク種牡馬XYZ", dam_sire=None)
+        score = factors.score_bloodline(db, horse.id, "東京", 2000, "芝")
+        assert score == 50.0
+
+    def test_score_bloodline_horse_not_found(self, db):
+        """存在しない horse_id → 50.0 を返す"""
+        score = factors.score_bloodline(db, "nonexistent_horse", "東京", 2000, "芝")
+        assert score == 50.0
+
+
+# ---------------------------------------------------------------------------
+# ファクターテスト: score_overall（データなし）
+# ---------------------------------------------------------------------------
+
+class TestScoreOverallNoData:
+    def test_score_overall_no_data(self, db):
+        """全結果なし → 50.0 を返す"""
+        horse = _make_horse(db, "h_ov_nodata", name="未実績馬")
+        score = factors.score_overall(db, horse.id)
+        assert score == 50.0
+
+    def test_score_overall_with_wins(self, db):
+        """勝利実績あり → 50.0 より高いスコアを返す"""
+        race = _make_race(db, "r_ov_001", name="全体テスト", grade="G1")
+        horse = _make_horse(db, "h_ov_001", name="優勝馬")
+        _make_result(db, race.id, horse.id, finish_position=1)
+        score = factors.score_overall(db, horse.id)
+        assert score > 50.0
+
+    def test_score_overall_range(self, db):
+        """score_overall は 0〜100 の範囲内であること"""
+        race = _make_race(db, "r_ov_range", name="範囲テスト", grade="G2")
+        horse = _make_horse(db, "h_ov_range", name="範囲テスト馬")
+        _make_result(db, race.id, horse.id, finish_position=5)
+        score = factors.score_overall(db, horse.id)
+        assert 0.0 <= score <= 100.0
+
+
+# ---------------------------------------------------------------------------
+# 全ファクターの範囲テスト
+# ---------------------------------------------------------------------------
+
+class TestScoreAllFactorsRange:
+    """全ファクターの結果が 0〜100 の範囲内であることを検証"""
+
+    def _setup(self, db):
+        """テスト用の最小限のデータを構築"""
+        jockey = _make_jockey(db, "j_range_001", "範囲テスト騎手")
+        trainer = _make_trainer(db, "tr_range_001", "範囲テスト調教師")
+        race = _make_race(db, "r_range_001", name="天皇賞（春）",
+                          venue="京都", distance=3200, course_type="芝",
+                          grade="G1", track_condition="良")
+        horse = _make_horse(db, "h_range_001", name="範囲テスト馬",
+                            sire="ディープインパクト", dam_sire="Storm Cat")
+        _make_entry(db, race.id, horse.id, jockey_id=jockey.id,
+                    trainer_id=trainer.id)
+        # 過去成績
+        past_race = _make_race(db, "r_range_past", name="天皇賞（春）",
+                               venue="京都", distance=3200, course_type="芝",
+                               grade="G1", track_condition="良",
+                               race_date=date(2023, 4, 30))
+        _make_result(db, past_race.id, horse.id, finish_position=2, last_3f=33.5)
+        return race, horse, jockey, trainer
+
+    def test_score_all_factors_range(self, db):
+        """全8ファクターが 0〜100 の範囲内"""
+        race, horse, jockey, trainer = self._setup(db)
+
+        score_recent = factors.score_recent_form(db, horse.id)
+        score_same = factors.score_same_race(db, horse.id, "天皇賞")
+        score_course = factors.score_course_aptitude(db, horse.id, race.venue, race.distance)
+        score_track = factors.score_track_condition(db, horse.id, race.track_condition)
+        score_jockey = factors.score_jockey(db, jockey.id, race.venue, race.grade)
+        score_trainer = factors.score_trainer(db, trainer.id, race.venue, race.grade)
+        score_bloodline = factors.score_bloodline(db, horse.id, race.venue, race.distance, race.course_type)
+        score_overall = factors.score_overall(db, horse.id)
+
+        all_scores = {
+            "recent_form": score_recent,
+            "same_race": score_same,
+            "course_aptitude": score_course,
+            "track_condition": score_track,
+            "jockey": score_jockey,
+            "trainer": score_trainer,
+            "bloodline": score_bloodline,
+            "overall": score_overall,
+        }
+
+        for factor_name, score in all_scores.items():
+            assert 0.0 <= score <= 100.0, (
+                f"{factor_name} のスコアが 0〜100 の範囲外: {score}"
+            )
+
+    def test_score_recent_form_range(self, db):
+        """score_recent_form は 0〜100 の範囲内"""
+        race = _make_race(db, "r_rf_range", name="範囲テスト近走", grade="G1")
+        horse = _make_horse(db, "h_rf_range", name="近走テスト馬")
+        _make_result(db, race.id, horse.id, finish_position=10, last_3f=36.0)
+        score = factors.score_recent_form(db, horse.id)
+        assert 0.0 <= score <= 100.0
+
+    def test_score_same_race_range(self, db):
+        """score_same_race は 0〜100 の範囲内"""
+        race = _make_race(db, "r_sr_range", name="菊花賞", grade="G1")
+        horse = _make_horse(db, "h_sr_range", name="同レーステスト馬")
+        _make_result(db, race.id, horse.id, finish_position=8)
+        score = factors.score_same_race(db, horse.id, "菊花賞")
+        assert 0.0 <= score <= 100.0
+
+    def test_score_course_aptitude_range(self, db):
+        """score_course_aptitude は 0〜100 の範囲内"""
+        race = _make_race(db, "r_ca_range", venue="新潟", distance=1800, grade="G3")
+        horse = _make_horse(db, "h_ca_range", name="コース適性テスト馬")
+        _make_result(db, race.id, horse.id, finish_position=1)
+        score = factors.score_course_aptitude(db, horse.id, "新潟", 1800)
+        assert 0.0 <= score <= 100.0
+
+    def test_score_track_condition_range(self, db):
+        """score_track_condition は 0〜100 の範囲内"""
+        race = _make_race(db, "r_tc_range", track_condition="重", grade="G2")
+        horse = _make_horse(db, "h_tc_range", name="馬場適性テスト馬")
+        _make_result(db, race.id, horse.id, finish_position=1)
+        score = factors.score_track_condition(db, horse.id, "重")
+        assert 0.0 <= score <= 100.0

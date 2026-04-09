@@ -1,21 +1,34 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Race, Prediction } from '../types';
 import { useApi } from '../hooks/useApi';
 import ScoreTable from '../components/ScoreTable';
 import ScoreChart from '../components/ScoreChart';
 import WeatherBadge from '../components/WeatherBadge';
 
+// トップ3カードの背景グラデーション
+const RANK_GRADIENT: Record<number, string> = {
+  1: 'bg-gradient-to-br from-yellow-500/30 via-amber-400/20 to-yellow-600/10 border border-yellow-500/30',
+  2: 'bg-gradient-to-br from-slate-400/30 via-gray-300/20 to-slate-500/10 border border-slate-400/30',
+  3: 'bg-gradient-to-br from-amber-700/30 via-orange-600/20 to-amber-800/10 border border-amber-700/30',
+};
+
 const RANK_BADGE: Record<number, string> = {
-  1: 'badge-warning',   // gold
-  2: 'badge-ghost',     // silver
-  3: 'badge-accent',    // bronze
+  1: 'badge-warning',
+  2: 'badge-ghost',
+  3: 'badge-accent',
 };
 
 const RANK_LABEL: Record<number, string> = {
-  1: '🥇 1着',
-  2: '🥈 2着',
-  3: '🥉 3着',
+  1: '🥇 1着予想',
+  2: '🥈 2着予想',
+  3: '🥉 3着予想',
+};
+
+const RANK_SCORE_COLOR: Record<number, string> = {
+  1: 'text-yellow-400',
+  2: 'text-slate-300',
+  3: 'text-amber-600',
 };
 
 export default function RaceDetail() {
@@ -35,20 +48,51 @@ export default function RaceDetail() {
         fetchApi<Prediction[]>(`/races/${id}/predictions`),
       ]);
       if (raceData) setRace(raceData);
-      if (predData) setPredictions(predData);
+      if (predData) {
+        setPredictions(predData);
+        // デフォルトで1位馬を選択
+        const top = predData.find((p) => p.rank === 1) ?? null;
+        setSelectedPrediction(top);
+      }
     };
 
     loadData();
   }, [id, fetchApi]);
 
-  const handleHorseClick = (horseId: string) => {
-    navigate(`/horse/${horseId}`);
+  const handleHorseSelect = (horseId: string) => {
+    const pred = predictions.find((p) => p.horse_id === horseId) ?? null;
+    setSelectedPrediction(pred);
   };
 
+  // ローディング中スケルトン
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
-        <span className="loading loading-spinner loading-lg"></span>
+      <div className="space-y-6">
+        <div className="skeleton h-8 w-32"></div>
+        <div className="card bg-base-100 shadow-lg">
+          <div className="card-body space-y-4">
+            <div className="skeleton h-8 w-64"></div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="skeleton h-3 w-16"></div>
+                  <div className="skeleton h-5 w-24"></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="card bg-base-100 shadow">
+              <div className="card-body space-y-3">
+                <div className="skeleton h-5 w-20"></div>
+                <div className="skeleton h-7 w-32"></div>
+                <div className="skeleton h-4 w-28"></div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -73,10 +117,19 @@ export default function RaceDetail() {
 
   return (
     <div className="space-y-6">
-      {/* 戻るボタン */}
-      <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}>
-        ← 一覧に戻る
-      </button>
+      {/* パンくずリスト風ナビゲーション */}
+      <div className="flex items-center gap-2 text-sm">
+        <button
+          className="btn btn-ghost btn-xs"
+          onClick={() => navigate('/')}
+        >
+          ← 一覧に戻る
+        </button>
+        <span className="opacity-30">/</span>
+        <span className="text-base-content/60">ダッシュボード</span>
+        <span className="opacity-30">/</span>
+        <span className="font-semibold truncate max-w-xs">{race.name}</span>
+      </div>
 
       {/* レース基本情報 */}
       <div className="card bg-base-100 shadow-lg">
@@ -118,17 +171,30 @@ export default function RaceDetail() {
             {top3.map((pred) => (
               <div
                 key={pred.horse_id}
-                className="card bg-base-100 shadow cursor-pointer hover:shadow-lg transition-shadow"
-                onClick={() => handleHorseClick(pred.horse_id)}
+                className={`card shadow cursor-pointer hover:scale-[1.02] transition-all duration-200 ${RANK_GRADIENT[pred.rank] ?? 'bg-base-100'}`}
+                onClick={() => setSelectedPrediction(pred)}
               >
                 <div className="card-body">
                   <div className="flex items-center gap-2">
-                    <span className={`badge ${RANK_BADGE[pred.rank] ?? 'badge-neutral'}`}>
+                    <span className={`badge ${RANK_BADGE[pred.rank] ?? 'badge-neutral'} badge-md`}>
                       {RANK_LABEL[pred.rank] ?? `${pred.rank}着`}
                     </span>
                   </div>
-                  <p className="text-lg font-bold mt-2">{pred.horse_name}</p>
-                  <p className="text-sm opacity-70">総合スコア: {pred.total_score.toFixed(1)}</p>
+                  <div className="flex items-end justify-between mt-2">
+                    <div>
+                      <p className="text-lg font-bold">{pred.horse_name}</p>
+                      <Link
+                        to={`/horse/${pred.horse_id}`}
+                        className="text-xs text-primary hover:underline opacity-80"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        詳細 →
+                      </Link>
+                    </div>
+                    <p className={`text-2xl font-black ${RANK_SCORE_COLOR[pred.rank] ?? 'opacity-70'}`}>
+                      {pred.total_score.toFixed(1)}
+                    </p>
+                  </div>
                 </div>
               </div>
             ))}
@@ -141,16 +207,31 @@ export default function RaceDetail() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="xl:col-span-2">
             <h2 className="text-xl font-bold mb-3">全馬ランキング</h2>
-            <ScoreTable
-              predictions={predictions}
-              onHorseClick={(horseId) => {
-                const pred = predictions.find((p) => p.horse_id === horseId) ?? null;
-                setSelectedPrediction(pred);
-              }}
-            />
+            <div className="card bg-base-100 shadow">
+              <div className="card-body p-2">
+                <ScoreTable
+                  predictions={predictions}
+                  selectedHorseId={selectedPrediction?.horse_id ?? null}
+                  onHorseClick={(horseId) => handleHorseSelect(horseId)}
+                />
+              </div>
+            </div>
+            <p className="text-xs opacity-40 mt-2 text-center">
+              行をクリックするとチャートが切り替わります
+            </p>
           </div>
           <div>
-            <h2 className="text-xl font-bold mb-3">ファクター別スコア</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xl font-bold">ファクター別スコア</h2>
+              {selectedPrediction && (
+                <Link
+                  to={`/horse/${selectedPrediction.horse_id}`}
+                  className="btn btn-xs btn-outline"
+                >
+                  馬詳細 →
+                </Link>
+              )}
+            </div>
             <ScoreChart prediction={selectedPrediction} />
           </div>
         </div>
