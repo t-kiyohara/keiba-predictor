@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 from app.scrapers.base import BaseScraper
@@ -31,13 +32,28 @@ def get_target_race_dates(today: date) -> list[date]:
         return [next_saturday, next_sunday]
 
 
+# グレード正規化マップ
+_GRADE_NORMALIZE: dict[str, str] = {
+    "GⅠ": "G1",
+    "GⅡ": "G2",
+    "GⅢ": "G3",
+    "J・GⅠ": "G1",
+    "J・GⅡ": "G2",
+    "J・GⅢ": "G3",
+}
+
+# グレードパターン（括弧内に含まれる形式）
+_GRADE_INNER = "|".join(re.escape(k) for k in _GRADE_NORMALIZE)
+_GRADE_PATTERN = re.compile(r"\((" + _GRADE_INNER + r")\)")
+
+
 class JraScraper(BaseScraper):
     """JRA公式サイトから重賞スケジュールを取得するスクレイパー。"""
 
-    JRA_SCHEDULE_URL = "https://www.jra.go.jp/keiba/schedule/"
+    JRA_SCHEDULE_URL = "https://www.jra.go.jp/keiba/thisweek/"
 
     async def fetch_graded_races(self, target_dates: list[date]) -> list[dict]:
-        """JRA公式の重賞スケジュールページから対象日のレースを取得する。
+        """JRA公式の今週の重賞ページから対象日のレースを取得する。
 
         Args:
             target_dates: 取得対象日のリスト
@@ -52,5 +68,104 @@ class JraScraper(BaseScraper):
                 "race_number": 11,
             }
         """
-        # TODO: Implement actual HTML parsing for JRA schedule page
-        return []
+        try:
+            html = await self.fetch(self.JRA_SCHEDULE_URL)
+        except Exception as e:
+            self.logger.warning("JRAスケジュールページの取得に失敗: %s", e)
+            return []
+
+        soup = self.parse_html(html)
+        results: list[dict] = []
+        current_year = date.today().year
+
+        # ページ全体のテキストを走査して日付・レース情報を抽出する
+        # h3タグにレース名が含まれており、直前または親要素に日付・会場情報がある
+        for h3 in soup.find_all("h3"):
+            h3_text = h3.get_text(strip=True)
+
+            # グレード判定
+            grade_match = _GRADE_PATTERN.search(h3_text)
+            if not grade_match:
+                continue
+            grade_raw = grade_match.group(1)
+            grade = _GRADE_NORMALIZE.get(grade_raw, "")
+            if not grade:
+                continue
+
+            # レース名（グレード括弧を除去）
+            race_name = h3_text
+
+            # 日付と会場・距離を隣接要素から探す
+            race_date: date | None = None
+            venue: str = ""
+            distance: int = 0
+
+            # h3の周辺（前後の兄弟・親）をたどって日付・会場・距離を探す
+            # まず親要素全体のテキストから日付を探す
+            parent = h3.parent
+            if parent:
+                parent_text = parent.get_text()
+                date_match = re.search(r"(\d+)月(\d+)日", parent_text)
+                if date_match:
+                    month = int(date_match.group(1))
+                    day = int(date_match.group(2))
+                    race_date = date(current_year, month, day)
+
+                # 会場は「〇〇競馬場」のパターン
+                venue_match = re.search(r"([^\s　]+)競馬場", parent_text)
+                if venue_match:
+                    venue = venue_match.group(1)
+
+                # 距離は「NNNNメートル」のパターン
+                dist_match = re.search(r"(\d{3,4})メートル", parent_text)
+                if dist_match:
+                    distance = int(dist_match.group(1))
+
+            # 親で見つからない場合はページ全体を走査（前後のp/h4タグ）
+            if not race_date:
+                # h3より前の要素から日付を探す
+                for sibling in h3.find_all_previous(["p", "h4", "h2", "div"]):
+                    sib_text = sibling.get_text()
+                    date_match = re.search(r"(\d+)月(\d+)日", sib_text)
+                    if date_match:
+                        month = int(date_match.group(1))
+                        day = int(date_match.group(2))
+                        race_date = date(current_year, month, day)
+                        break
+
+            # h3の直後のp要素から会場・距離情報を取得
+            next_sibling = h3.find_next_sibling("p")
+            if next_sibling:
+                sib_text = next_sibling.get_text()
+                if not venue:
+                    venue_match = re.search(r"([^\s　]+)競馬場", sib_text)
+                    if venue_match:
+                        venue = venue_match.group(1)
+                if not distance:
+                    dist_match = re.search(r"(\d{3,4})メートル", sib_text)
+                    if dist_match:
+                        distance = int(dist_match.group(1))
+                if not race_date:
+                    date_match = re.search(r"(\d+)月(\d+)日", sib_text)
+                    if date_match:
+                        month = int(date_match.group(1))
+                        day = int(date_match.group(2))
+                        race_date = date(current_year, month, day)
+
+            # 日付フィルタ
+            if race_date is None or race_date not in target_dates:
+                continue
+
+            results.append(
+                {
+                    "name": race_name,
+                    "date": race_date,
+                    "venue": venue,
+                    "grade": grade,
+                    "distance": distance,
+                    # TODO: JRAページから実際のR番号を取得する（現在は重賞=11Rと仮定）
+                    "race_number": 11,
+                }
+            )
+
+        return results
