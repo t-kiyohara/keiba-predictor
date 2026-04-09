@@ -15,4 +15,4 @@ class Prediction(Base):
     score_details = Column(JSON, nullable=True)  # ファクター別スコア内訳
 
     race = relationship("Race", back_populates="predictions")
-    horse = relationship("Horse")
+    horse = relationship("Horse", back_populates="predictions")

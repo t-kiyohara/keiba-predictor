@@ -17,3 +17,4 @@ class Horse(Base):
 
     entries = relationship("Entry", back_populates="horse")
     results = relationship("Result", back_populates="horse")
+    predictions = relationship("Prediction", back_populates="horse")
