@@ -1,8 +1,9 @@
 import asyncio
-import httpx
-from bs4 import BeautifulSoup
 import logging
 import time
+
+import httpx
+from bs4 import BeautifulSoup
 
 
 class BaseScraper:
@@ -23,8 +24,14 @@ class BaseScraper:
         if elapsed < self.MIN_INTERVAL:
             await asyncio.sleep(self.MIN_INTERVAL - elapsed)
 
-    async def fetch(self, url: str) -> str:
-        """URLからHTMLを取得（リトライ付き）"""
+    async def fetch(self, url: str, encoding: str | None = None) -> str:
+        """URLからHTMLを取得（リトライ付き）
+
+        Args:
+            url: 取得対象URL
+            encoding: 文字エンコーディング（例: "euc-jp"）。Noneの場合は
+                      レスポンスのcharset_encodingまたはutf-8を使用する。
+        """
         for attempt in range(self.MAX_RETRIES):
             try:
                 await self._wait_interval()
@@ -36,14 +43,22 @@ class BaseScraper:
                     )
                     self._last_request_time = time.time()
                     response.raise_for_status()
-                    # netkeibaはEUC-JPの場合がある
-                    response.encoding = response.charset_encoding or "utf-8"
+                    # encodingが指定された場合はそれを優先する
+                    response.encoding = (
+                        encoding or response.charset_encoding or "utf-8"
+                    )
                     return response.text
             except (httpx.HTTPError, httpx.TimeoutException) as e:
-                self.logger.warning(f"Attempt {attempt + 1}/{self.MAX_RETRIES} failed for {url}: {e}")
+                self.logger.warning(
+                    "Attempt %d/%d failed for %s: %s",
+                    attempt + 1,
+                    self.MAX_RETRIES,
+                    url,
+                    e,
+                )
                 if attempt == self.MAX_RETRIES - 1:
                     raise
-                await asyncio.sleep(2 ** attempt)  # exponential backoff
+                await asyncio.sleep(2**attempt)  # exponential backoff
         return ""  # unreachable but for type checker
 
     def parse_html(self, html: str, encoding: str | None = None) -> BeautifulSoup:

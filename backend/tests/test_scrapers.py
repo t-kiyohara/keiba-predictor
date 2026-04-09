@@ -3,12 +3,209 @@
 from __future__ import annotations
 
 from datetime import date
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.scrapers.base import BaseScraper
-from app.scrapers.jra import get_target_race_dates
+from app.scrapers.jra import JraScraper, get_target_race_dates
+from app.scrapers.netkeiba import NetkeibaScraper
 from app.scrapers.weather import VENUE_COORDINATES, WEATHER_JP, WeatherClient
+
+# ---------------------------------------------------------------------------
+# HTMLフィクスチャ定義
+# ---------------------------------------------------------------------------
+
+# JRA今週の重賞ページフィクスチャ（年はdate.today().yearに合わせる）
+JRA_THISWEEK_HTML = """
+<html><body>
+<div class="thisweek">
+  <div class="race_block">
+    <p>4月13日（日曜日）</p>
+    <h3>天皇賞（春）(GⅠ)</h3>
+    <p>京都競馬場 / 3200メートル / 芝</p>
+  </div>
+  <div class="race_block">
+    <p>4月12日（土曜日）</p>
+    <h3>青葉賞(GⅡ)</h3>
+    <p>東京競馬場 / 2400メートル / 芝</p>
+  </div>
+  <div class="race_block">
+    <p>4月13日（日曜日）</p>
+    <h3>フローラステークス(GⅡ)</h3>
+    <p>東京競馬場 / 2000メートル / 芝</p>
+  </div>
+  <div class="race_block">
+    <p>5月3日（土曜日）</p>
+    <h3>NHKマイルカップ(GⅠ)</h3>
+    <p>東京競馬場 / 1600メートル / 芝</p>
+  </div>
+  <div class="race_block">
+    <p>4月12日（土曜日）</p>
+    <h3>福島牝馬ステークス(GⅢ)</h3>
+    <p>福島競馬場 / 1800メートル / 芝</p>
+  </div>
+</div>
+</body></html>
+"""
+
+# JRA 障害グレードのテスト用HTML
+JRA_JUMP_HTML = """
+<html><body>
+<div>
+  <p>4月13日（日曜日）</p>
+  <h3>阪神スプリングジャンプ(J・GⅡ)</h3>
+  <p>阪神競馬場 / 3900メートル / 障害</p>
+</div>
+</body></html>
+"""
+
+# netkeibaレース一覧フィクスチャ
+RACE_LIST_HTML = """
+<html><body>
+<ul>
+  <li><a href="https://race.netkeiba.com/race/shutuba.html?race_id=202606030501">1R</a></li>
+  <li><a href="https://race.netkeiba.com/race/shutuba.html?race_id=202606030511">11R</a></li>
+  <li><a href="https://race.netkeiba.com/race/shutuba.html?race_id=202609020511">11R</a></li>
+</ul>
+</body></html>
+"""
+
+# netkeiba出馬表フィクスチャ
+SHUTUBA_HTML = """
+<html><body>
+<div class="RaceData01">15:45発走 / 2000m (芝) / 天気:晴</div>
+<h1 class="RaceName">テストステークス(GⅠ)</h1>
+<table class="Shutuba_Table"><tbody>
+<tr>
+  <td class="Waku">1</td>
+  <td class="Umaban">1</td>
+  <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2019105943">テスト馬A</a></td>
+  <td class="Barei">牡4</td>
+  <td class="Kinryo">58.0</td>
+  <td><a href="https://db.netkeiba.com/jockey/result/recent/01167/">テスト騎手A</a></td>
+  <td><a href="https://db.netkeiba.com/trainer/result/recent/01234/">テスト調教師A</a></td>
+</tr>
+<tr>
+  <td class="Waku">2</td>
+  <td class="Umaban">2</td>
+  <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2020101234">テスト馬B</a></td>
+  <td class="Barei">牝3</td>
+  <td class="Kinryo">54.0</td>
+  <td><a href="https://db.netkeiba.com/jockey/result/recent/00422/">テスト騎手B</a></td>
+  <td><a href="https://db.netkeiba.com/trainer/result/recent/01046/">テスト調教師B</a></td>
+</tr>
+<tr class="Cancel">
+  <td class="Waku">3</td>
+  <td class="Umaban">3</td>
+  <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2020109999">取消馬C</a></td>
+  <td class="Barei">牡4</td>
+  <td class="Kinryo">58.0</td>
+  <td><a href="https://db.netkeiba.com/jockey/result/recent/01999/">テスト騎手C</a></td>
+  <td><a href="https://db.netkeiba.com/trainer/result/recent/01999/">テスト調教師C</a></td>
+</tr>
+</tbody></table>
+</body></html>
+"""
+
+# 出馬表テーブルなしフィクスチャ
+SHUTUBA_NO_TABLE_HTML = """
+<html><body>
+<div class="RaceData01">15:45発走 / 2000m (芝) / 天気:晴</div>
+<h1 class="RaceName">テストステークス(GⅠ)</h1>
+<p>出馬表データが見つかりません</p>
+</body></html>
+"""
+
+# ダートコース出馬表フィクスチャ
+SHUTUBA_DIRT_HTML = """
+<html><body>
+<div class="RaceData01">16:00発走 / 1600m (ダート) / 天気:曇り</div>
+<h1 class="RaceName">ダートレース(GⅡ)</h1>
+<table class="Shutuba_Table"><tbody>
+<tr>
+  <td class="Waku">1</td>
+  <td class="Umaban">1</td>
+  <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2021101111">ダート馬A</a></td>
+  <td class="Kinryo">57.0</td>
+  <td><a href="https://db.netkeiba.com/jockey/result/recent/01001/">騎手X</a></td>
+  <td><a href="https://db.netkeiba.com/trainer/result/recent/02001/">調教師X</a></td>
+</tr>
+</tbody></table>
+</body></html>
+"""
+
+# 馬プロフィールフィクスチャ
+HORSE_PROFILE_HTML = """
+<html><head><title>テスト馬A（テスト牧場）</title></head>
+<body>
+<div class="db_main_box">
+  <div class="horse_title">
+    <h1>テスト馬A</h1>
+  </div>
+  <table class="db_prof_table">
+    <tr><th>生年月日</th><td>2019年3月1日</td></tr>
+    <tr><th>性齢</th><td>牡7</td></tr>
+    <tr><th>調教師</th><td>テスト調教師</td></tr>
+  </table>
+</div>
+</body></html>
+"""
+
+# 血統フィクスチャ（Ajax）
+HORSE_PEDIGREE_HTML = """
+<html><body>
+<table class="blood_table">
+<tr>
+  <td><a href="/horse/pedigree/0000000001/">テスト父馬</a></td>
+  <td><a href="/horse/pedigree/0000000002/">父の父</a></td>
+</tr>
+<tr>
+  <td><a href="/horse/pedigree/0000000003/">テスト母馬</a></td>
+  <td><a href="/horse/pedigree/0000000004/">母の父</a></td>
+</tr>
+<tr>
+  <td><a href="/horse/pedigree/0000000005/">テスト母父馬</a></td>
+  <td></td>
+</tr>
+</table>
+</body></html>
+"""
+
+# 過去成績フィクスチャ
+HORSE_RESULTS_HTML = """
+<html><body>
+<table>
+<tr>
+  <th>日付</th><th>開催</th><th>天気</th><th>R</th><th>レース名</th>
+  <th>映像</th><th>頭数</th><th>枠</th><th>馬番</th><th>オッズ</th><th>人気</th>
+  <th>着順</th><th>騎手</th><th>斤量</th><th>距離</th><th>馬場</th>
+  <th>馬場指数</th><th>タイム</th><th>着差</th><th>タイム指数</th><th>上3F</th><th>コメント</th>
+</tr>
+<tr>
+  <td>2024/04/28</td><td>阪神1回1日</td><td>晴</td><td>11</td>
+  <td><a href="https://db.netkeiba.com/race/?race_id=202409020511">天皇賞（春）</a></td>
+  <td></td><td>18</td><td>3</td><td>5</td><td>3.5</td><td>2</td>
+  <td>1</td><td>テスト騎手A</td><td>58.0</td><td>芝3200</td><td>良</td>
+  <td>100</td><td>3:14.2</td><td>-</td><td>120</td><td>34.8</td><td></td>
+</tr>
+<tr>
+  <td>2024/02/10</td><td>東京1回2日</td><td>晴</td><td>9</td>
+  <td><a href="https://db.netkeiba.com/race/?race_id=202405050905">日経新春杯</a></td>
+  <td></td><td>16</td><td>5</td><td>9</td><td>5.1</td><td>3</td>
+  <td>2</td><td>テスト騎手B</td><td>58.0</td><td>芝2200</td><td>良</td>
+  <td>98</td><td>2:11.5</td><td>0.4</td><td>115</td><td>35.2</td><td></td>
+</tr>
+<tr>
+  <td>2023/12/25</td><td>中山1回1日</td><td>曇</td><td>10</td>
+  <td><a href="https://db.netkeiba.com/race/?race_id=202406031010">有馬記念</a></td>
+  <td></td><td>16</td><td>2</td><td>3</td><td>8.0</td><td>4</td>
+  <td>中止</td><td>テスト騎手A</td><td>58.0</td><td>芝2500</td><td>良</td>
+  <td></td><td></td><td></td><td></td><td></td><td>競走中止</td>
+</tr>
+</table>
+</body></html>
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +365,502 @@ async def test_weather_client_unknown_venue_returns_default():
     result = await client.get_weather("未定義競馬場")
     assert isinstance(result, dict)
     assert result["weather"] == "不明"
+
+
+# ---------------------------------------------------------------------------
+# JraScraper.fetch_graded_races
+# ---------------------------------------------------------------------------
+
+
+class TestJraFetchGradedRaces:
+    """JraScraper.fetch_graded_races() のHTMLパーステスト。
+
+    フィクスチャHTMLは当年（date.today().year）の4月日付を使用する。
+    JraScraper.fetch_graded_races() は date.today().year で年を決定するため。
+    """
+
+    @pytest.mark.asyncio
+    async def test_grade_normalization_g1(self):
+        """GⅠ表記がG1に正規化されること。"""
+        from datetime import date as d
+
+        scraper = JraScraper()
+        # フィクスチャHTMLの「4月13日」に合わせて対象日を設定
+        target = [d(d.today().year, 4, 13)]
+        mock = AsyncMock(return_value=JRA_THISWEEK_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_graded_races(target)
+        g1_races = [r for r in result if r["grade"] == "G1"]
+        assert len(g1_races) >= 1
+        names = [r["name"] for r in g1_races]
+        assert any("天皇賞" in n for n in names)
+
+    @pytest.mark.asyncio
+    async def test_venue_and_distance_extraction(self):
+        """会場名と距離が正しく抽出されること。"""
+        from datetime import date as d
+
+        scraper = JraScraper()
+        target = [d(d.today().year, 4, 13)]
+        mock = AsyncMock(return_value=JRA_THISWEEK_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_graded_races(target)
+        # 天皇賞（春）: 京都 / 3200メートル
+        tenno = next((r for r in result if "天皇賞" in r.get("name", "")), None)
+        assert tenno is not None
+        assert tenno["venue"] == "京都"
+        assert tenno["distance"] == 3200
+
+    @pytest.mark.asyncio
+    async def test_target_dates_filter(self):
+        """target_datesに含まれない日付のレースが除外されること。"""
+        from datetime import date as d
+
+        scraper = JraScraper()
+        # 4/12（土）のみ取得
+        target_saturday = [d(d.today().year, 4, 12)]
+        mock = AsyncMock(return_value=JRA_THISWEEK_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_graded_races(target_saturday)
+        # 4/13の天皇賞は含まれないこと
+        assert all(r["date"] == d(d.today().year, 4, 12) for r in result)
+        # 4/12の青葉賞は含まれること
+        names = [r["name"] for r in result]
+        assert any("青葉賞" in n for n in names)
+
+    @pytest.mark.asyncio
+    async def test_no_matching_races_returns_empty(self):
+        """対象日に該当レースがない場合は空リストを返すこと。"""
+        from datetime import date as d
+
+        scraper = JraScraper()
+        # HTML内に存在しない日付
+        target = [d(d.today().year, 6, 15)]
+        mock = AsyncMock(return_value=JRA_THISWEEK_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_graded_races(target)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_jump_grade_normalization(self):
+        """障害グレード（J・GⅡ等）が正規化されること。"""
+        from datetime import date as d
+
+        scraper = JraScraper()
+        target = [d(d.today().year, 4, 13)]
+        mock = AsyncMock(return_value=JRA_JUMP_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_graded_races(target)
+        assert len(result) >= 1
+        assert result[0]["grade"] == "G2"
+
+
+# ---------------------------------------------------------------------------
+# NetkeibaScraper.fetch_race_entries
+# ---------------------------------------------------------------------------
+
+
+class TestNetkeibaFetchRaceEntries:
+    """NetkeibaScraper.fetch_race_entries() のHTMLパーステスト。"""
+
+    @pytest.mark.asyncio
+    async def test_race_info_extraction(self):
+        """レース名・距離・コース種別が正しく抽出されること。"""
+        scraper = NetkeibaScraper()
+        race_id = "202409020511"
+        with patch.object(scraper, "fetch", new=AsyncMock(return_value=SHUTUBA_HTML)):
+            result = await scraper.fetch_race_entries(race_id)
+        assert result != {}
+        ri = result["race_info"]
+        assert ri["race_id"] == race_id
+        assert "テストステークス" in ri["name"]
+        assert ri["distance"] == 2000
+        assert ri["course_type"] == "芝"
+
+    @pytest.mark.asyncio
+    async def test_grade_extraction(self):
+        """グレードがレース名から正しく抽出されること。"""
+        scraper = NetkeibaScraper()
+        with patch.object(scraper, "fetch", new=AsyncMock(return_value=SHUTUBA_HTML)):
+            result = await scraper.fetch_race_entries("202409020511")
+        assert result["race_info"]["grade"] == "G1"
+
+    @pytest.mark.asyncio
+    async def test_entries_parsing(self):
+        """出走馬リストが正しくパースされること（ID・名前・斤量）。"""
+        scraper = NetkeibaScraper()
+        with patch.object(scraper, "fetch", new=AsyncMock(return_value=SHUTUBA_HTML)):
+            result = await scraper.fetch_race_entries("202409020511")
+        entries = result["entries"]
+        # 取消馬(Cancel class)を除いた2頭
+        assert len(entries) == 2
+        horse_a = next(e for e in entries if e["horse_name"] == "テスト馬A")
+        assert horse_a["horse_id"] == "2019105943"
+        assert horse_a["weight"] == 58.0
+        assert horse_a["jockey_id"] == "01167"
+        assert horse_a["trainer_id"] == "01234"
+        assert horse_a["post_position"] == 1
+        assert horse_a["horse_number"] == 1
+
+    @pytest.mark.asyncio
+    async def test_cancelled_horse_skipped(self):
+        """取消馬（Cancelクラス）がエントリーから除外されること。"""
+        scraper = NetkeibaScraper()
+        with patch.object(scraper, "fetch", new=AsyncMock(return_value=SHUTUBA_HTML)):
+            result = await scraper.fetch_race_entries("202409020511")
+        entries = result["entries"]
+        horse_ids = [e["horse_id"] for e in entries]
+        # 取消馬のIDは含まれないこと
+        assert "2020109999" not in horse_ids
+
+    @pytest.mark.asyncio
+    async def test_no_table_returns_empty_dict(self):
+        """出馬表テーブルが見つからない場合は空dictを返すこと。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=SHUTUBA_NO_TABLE_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_race_entries("202409020511")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_dirt_course_type(self):
+        """ダートコースのコース種別が正しく取得されること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=SHUTUBA_DIRT_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_race_entries("202409010511")
+        assert result["race_info"]["course_type"] == "ダート"
+        assert result["race_info"]["distance"] == 1600
+
+
+# ---------------------------------------------------------------------------
+# NetkeibaScraper.fetch_horse_profile
+# ---------------------------------------------------------------------------
+
+
+class TestNetkeibaFetchHorseProfile:
+    """NetkeibaScraper.fetch_horse_profile() のHTMLパーステスト。"""
+
+    @pytest.mark.asyncio
+    async def test_horse_name_and_birthday_extraction(self):
+        """馬名と誕生日が正しく抽出されること。"""
+        scraper = NetkeibaScraper()
+        with patch.object(
+            scraper,
+            "fetch",
+            new=AsyncMock(side_effect=[HORSE_PROFILE_HTML, HORSE_PEDIGREE_HTML]),
+        ):
+            result = await scraper.fetch_horse_profile("2019105943")
+        assert result["name"] == "テスト馬A"
+        assert result["birthday"] == "2019-03-01"
+        assert result["id"] == "2019105943"
+
+    @pytest.mark.asyncio
+    async def test_pedigree_extraction(self):
+        """血統（父・母・母父）が正しく抽出されること。"""
+        scraper = NetkeibaScraper()
+        with patch.object(
+            scraper,
+            "fetch",
+            new=AsyncMock(side_effect=[HORSE_PROFILE_HTML, HORSE_PEDIGREE_HTML]),
+        ):
+            result = await scraper.fetch_horse_profile("2019105943")
+        assert result["sire"] == "テスト父馬"
+        assert result["dam"] == "テスト母馬"
+        assert result["dam_sire"] == "テスト母父馬"
+
+    @pytest.mark.asyncio
+    async def test_sex_extraction(self):
+        """性別が正しく抽出されること。"""
+        scraper = NetkeibaScraper()
+        with patch.object(
+            scraper,
+            "fetch",
+            new=AsyncMock(side_effect=[HORSE_PROFILE_HTML, HORSE_PEDIGREE_HTML]),
+        ):
+            result = await scraper.fetch_horse_profile("2019105943")
+        assert result["sex"] == "牡"
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_returns_empty_dict(self):
+        """HTTPエラー時に空dictを返すこと。"""
+        import httpx
+
+        scraper = NetkeibaScraper()
+        with patch.object(
+            scraper,
+            "fetch",
+            new=AsyncMock(side_effect=httpx.HTTPError("404 Not Found")),
+        ):
+            result = await scraper.fetch_horse_profile("9999999999")
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# NetkeibaScraper.fetch_horse_results
+# ---------------------------------------------------------------------------
+
+
+class TestNetkeibaFetchHorseResults:
+    """NetkeibaScraper.fetch_horse_results() のHTMLパーステスト。"""
+
+    @pytest.mark.asyncio
+    async def test_results_parsing(self):
+        """過去成績が正しくパースされること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=HORSE_RESULTS_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_horse_results("2019105943")
+        # 着順が数値の2行のみ（中止行はスキップ）
+        assert len(result) == 2
+        # 1着の行
+        first = result[0]
+        assert first["finish_position"] == 1
+        assert first["time"] == "3:14.2"
+        assert first["last_3f"] == 34.8
+        assert first["jockey_name"] == "テスト騎手A"
+
+    @pytest.mark.asyncio
+    async def test_limit_applied(self):
+        """limitが正しく適用されること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=HORSE_RESULTS_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_horse_results("2019105943", limit=1)
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_position_skipped(self):
+        """「中止」「除外」等の非数値着順行がスキップされること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=HORSE_RESULTS_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_horse_results("2019105943")
+        positions = [r["finish_position"] for r in result]
+        # 全て数値（中止行は除外済み）
+        assert all(isinstance(p, int) for p in positions)
+        # 中止行の有馬記念は含まれないこと（2行のみ）
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_race_id_extracted_from_link(self):
+        """race_idがリンクhrefから正しく抽出されること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=HORSE_RESULTS_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_horse_results("2019105943")
+        assert result[0]["race_id"] == "202409020511"
+
+    @pytest.mark.asyncio
+    async def test_distance_and_course_type_extracted(self):
+        """距離とコース種別が正しく抽出されること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=HORSE_RESULTS_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_horse_results("2019105943")
+        assert result[0]["course_type"] == "芝"
+        assert result[0]["distance"] == 3200
+
+
+# ---------------------------------------------------------------------------
+# FetchService 永続化テスト
+# ---------------------------------------------------------------------------
+
+
+class TestFetchServicePersistence:
+    """FetchService._persist_race_entries / _persist_horse_profile /
+    _persist_horse_results のDB永続化テスト。"""
+
+    # 出馬表データのフィクスチャ
+    SAMPLE_ENTRIES_DATA = {
+        "race_info": {
+            "race_id": "202409020511",
+            "name": "テストステークス",
+            "date": "2026-04-27",
+            "venue": "阪神",
+            "grade": "G1",
+            "distance": 2000,
+            "course_type": "芝",
+        },
+        "entries": [
+            {
+                "horse_id": "2019105943",
+                "horse_name": "テスト馬A",
+                "jockey_id": "01167",
+                "jockey_name": "テスト騎手A",
+                "trainer_id": "01234",
+                "trainer_name": "テスト調教師A",
+                "post_position": 1,
+                "horse_number": 1,
+                "weight": 58.0,
+            },
+            {
+                "horse_id": "2020101234",
+                "horse_name": "テスト馬B",
+                "jockey_id": "00422",
+                "jockey_name": "テスト騎手B",
+                "trainer_id": "01046",
+                "trainer_name": "テスト調教師B",
+                "post_position": 2,
+                "horse_number": 2,
+                "weight": 54.0,
+            },
+        ],
+    }
+
+    def test_persist_race_entries_creates_race(self, db):
+        """_persist_race_entries がRaceレコードを作成すること。"""
+        from app.models import Race
+        from app.services.fetch_service import FetchService
+
+        service = FetchService(db=db)
+        service._persist_race_entries(self.SAMPLE_ENTRIES_DATA)
+
+        race = db.get(Race, "202409020511")
+        assert race is not None
+        assert race.name == "テストステークス"
+        assert race.venue == "阪神"
+        assert race.grade == "G1"
+        assert race.distance == 2000
+
+    def test_persist_race_entries_creates_horses_and_entries(self, db):
+        """_persist_race_entries がHorse/Entry/Jockey/Trainerレコードを作成すること。"""
+        from app.models import Entry, Horse, Jockey, Trainer
+        from app.services.fetch_service import FetchService
+
+        service = FetchService(db=db)
+        service._persist_race_entries(self.SAMPLE_ENTRIES_DATA)
+
+        # 馬の確認
+        horse_a = db.get(Horse, "2019105943")
+        assert horse_a is not None
+        assert horse_a.name == "テスト馬A"
+
+        # 騎手・調教師の確認
+        jockey = db.get(Jockey, "01167")
+        assert jockey is not None
+        trainer = db.get(Trainer, "01234")
+        assert trainer is not None
+
+        # エントリーの確認
+        entries = db.query(Entry).filter_by(race_id="202409020511").all()
+        assert len(entries) == 2
+
+    def test_persist_horse_results_creates_stub_race(self, db):
+        """_persist_horse_results が参照先Raceが存在しない場合に
+        スタブRaceを作成すること。"""
+        from app.models import Horse, Race, Result
+        from app.services.fetch_service import FetchService
+
+        # 馬を先に作成
+        horse = Horse(id="2019105943", name="テスト馬A")
+        db.add(horse)
+        db.flush()
+
+        service = FetchService(db=db)
+        results = [
+            {
+                "race_id": "202312251010",
+                "race_name": "有馬記念",
+                "date": "2023-12-25",
+                "venue": "中山",
+                "distance": 2500,
+                "course_type": "芝",
+                "track_condition": "良",
+                "finish_position": 3,
+                "time": "2:31.5",
+                "last_3f": 35.1,
+                "jockey_name": "テスト騎手A",
+            }
+        ]
+        service._persist_horse_results("2019105943", results)
+
+        # スタブRaceが作成されること
+        stub_race = db.get(Race, "202312251010")
+        assert stub_race is not None
+        assert stub_race.name == "有馬記念"
+
+        # Resultが作成されること
+        result_row = db.query(Result).filter_by(
+            race_id="202312251010", horse_id="2019105943"
+        ).first()
+        assert result_row is not None
+        assert result_row.finish_position == 3
+
+    def test_persist_horse_profile_updates_horse(self, db):
+        """_persist_horse_profile が Horse.sire/dam/dam_sire を更新すること。"""
+        from app.models import Horse
+        from app.services.fetch_service import FetchService
+
+        # 馬を先に作成
+        horse = Horse(id="2019105943", name="テスト馬A")
+        db.add(horse)
+        db.flush()
+
+        service = FetchService(db=db)
+        profile = {
+            "id": "2019105943",
+            "name": "テスト馬A",
+            "sex": "牡",
+            "birthday": "2019-03-01",
+            "sire": "テスト父馬",
+            "dam": "テスト母馬",
+            "dam_sire": "テスト母父馬",
+        }
+        service._persist_horse_profile(profile)
+
+        updated = db.get(Horse, "2019105943")
+        assert updated is not None
+        assert updated.sire == "テスト父馬"
+        assert updated.dam == "テスト母馬"
+        assert updated.dam_sire == "テスト母父馬"
+
+
+# ---------------------------------------------------------------------------
+# NetkeibaScraper.fetch_race_list_by_date
+# ---------------------------------------------------------------------------
+
+# テスト用HTMLフィクスチャ（課題指定のHTML構造）
+RACE_LIST_NEW_HTML = """
+<html><body>
+<ul class="RaceList">
+  <li><a href="../race/shutuba.html?race_id=202605060311&rf=race_list">3R</a></li>
+  <li><a href="../race/shutuba.html?race_id=202605060311&rf=race_list">重複</a></li>
+  <li><a href="../race/shutuba.html?race_id=202605060811&rf=race_list">8R</a></li>
+</ul>
+</body></html>
+"""
+
+RACE_LIST_EMPTY_HTML = """
+<html><body>
+<p>レースはありません</p>
+</body></html>
+"""
+
+
+class TestNetkeibaFetchRaceListByDate:
+    """NetkeibaScraper.fetch_race_list_by_date() のHTMLパーステスト。"""
+
+    @pytest.mark.asyncio
+    async def test_fetch_race_list_by_date_extracts_race_ids(self):
+        """race_id と race_number が正しく抽出されること（重複IDはスキップ）。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=RACE_LIST_NEW_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_race_list_by_date(date(2026, 5, 6))
+
+        race_ids = [r["race_id"] for r in result]
+        race_numbers = [r["race_number"] for r in result]
+
+        assert race_ids == ["202605060311", "202605060811"]
+        assert race_numbers == [11, 11]
+
+    @pytest.mark.asyncio
+    async def test_fetch_race_list_by_date_empty_html(self):
+        """テーブルなしHTMLで空リストが返ること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=RACE_LIST_EMPTY_HTML)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_race_list_by_date(date(2026, 5, 6))
+
+        assert result == []
