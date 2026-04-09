@@ -1,0 +1,4 @@
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+select = ["E", "F", "I", "W"]
