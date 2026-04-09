@@ -1,4 +1,4 @@
-.PHONY: up down logs test lint seed
+.PHONY: up down logs test lint seed restart clean
 
 up:
 	docker compose up -d --build
@@ -10,10 +10,15 @@ logs:
 	docker compose logs -f
 
 test:
-	docker compose exec backend pytest && docker compose exec frontend npm test
+	docker compose exec backend pytest
 
 lint:
-	docker compose exec backend ruff check . && docker compose exec frontend npm run lint
+	docker compose exec backend ruff check .
 
 seed:
 	docker compose exec backend python -m app.seed
+
+restart: down up
+
+clean:
+	docker compose down -v

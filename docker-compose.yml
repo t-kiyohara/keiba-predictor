@@ -23,4 +23,5 @@ services:
       - ./db:/app/db
     environment:
       - DATABASE_URL=sqlite:///db/keiba.sqlite3
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
