@@ -30,12 +30,17 @@ export default function FetchButton({ onComplete }: Props) {
         const data: FetchProgress = await res.json();
         setProgress(data);
 
-        // 完了判定: current === total かつ total > 0
-        if (data.total > 0 && data.current >= data.total) {
+        // 完了判定: status で判定 + フォールバック
+        if (data.status === 'completed' || (data.total > 0 && data.current >= data.total)) {
           stopPolling();
           setFetching(false);
           setProgress(null);
           onComplete();
+        } else if (data.status === 'error') {
+          stopPolling();
+          setFetching(false);
+          setError(data.message || 'データ取得中にエラーが発生しました');
+          setProgress(null);
         }
       } catch {
         // ポーリング中のエラーは無視（一時的な接続エラーの可能性）

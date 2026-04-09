@@ -70,6 +70,7 @@ export interface Prediction {
 
 // データ取得進捗
 export interface FetchProgress {
+  status: string; // "idle" | "running" | "completed" | "error"
   step: string;
   current: number;
   total: number;
