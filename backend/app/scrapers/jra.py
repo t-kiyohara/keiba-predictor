@@ -44,7 +44,7 @@ _GRADE_NORMALIZE: dict[str, str] = {
 
 # グレードパターン（括弧内に含まれる形式）
 _GRADE_INNER = "|".join(re.escape(k) for k in _GRADE_NORMALIZE)
-_GRADE_PATTERN = re.compile(r"\((" + _GRADE_INNER + r")\)")
+_GRADE_PATTERN = re.compile(r"[（(](" + _GRADE_INNER + r")[）)]")
 
 
 class JraScraper(BaseScraper):
@@ -69,7 +69,7 @@ class JraScraper(BaseScraper):
             }
         """
         try:
-            html = await self.fetch(self.JRA_SCHEDULE_URL)
+            html = await self.fetch(self.JRA_SCHEDULE_URL, encoding="shift_jis")
         except Exception as e:
             self.logger.warning("JRAスケジュールページの取得に失敗: %s", e)
             return []
@@ -124,7 +124,7 @@ class JraScraper(BaseScraper):
             # 親で見つからない場合はページ全体を走査（前後のp/h4タグ）
             if not race_date:
                 # h3より前の要素から日付を探す
-                for sibling in h3.find_all_previous(["p", "h4", "h2", "div"]):
+                for sibling in h3.find_all_previous(["p", "h4", "h2", "div", "dt"]):
                     sib_text = sibling.get_text()
                     date_match = re.search(r"(\d+)月(\d+)日", sib_text)
                     if date_match:

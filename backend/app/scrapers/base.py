@@ -44,8 +44,10 @@ class BaseScraper:
                     self._last_request_time = time.time()
                     response.raise_for_status()
                     # encodingが指定された場合はそれを優先する
+                    # charset_encodingが空文字の場合もutf-8にフォールバック
+                    detected = response.charset_encoding
                     response.encoding = (
-                        encoding or response.charset_encoding or "utf-8"
+                        encoding or (detected if detected else None) or "utf-8"
                     )
                     return response.text
             except (httpx.HTTPError, httpx.TimeoutException) as e:

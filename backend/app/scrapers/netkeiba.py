@@ -115,7 +115,7 @@ class NetkeibaScraper(BaseScraper):
         """
         url = f"{self.BASE_URL}/race/shutuba.html?race_id={race_id}"
         try:
-            html = await self.fetch(url)
+            html = await self.fetch(url, encoding="euc-jp")
         except Exception as e:
             self.logger.warning("出馬表取得失敗 (race_id=%s): %s", race_id, e)
             return {}
@@ -200,15 +200,15 @@ class NetkeibaScraper(BaseScraper):
             self.logger.warning("出馬表テーブルが見つかりません (race_id=%s)", race_id)
             return {}
 
-        for tr in table.select("tbody tr"):
+        for tr in table.find_all("tr"):
             # 取消馬スキップ: trにclass "Cancel" があるか、テキストに"取消"を含む行
             tr_classes = tr.get("class", [])
             tr_text = tr.get_text()
             if "Cancel" in tr_classes or "取消" in tr_text:
                 continue
 
-            # 枠番
-            waku_td = tr.select_one("td.Waku")
+            # 枠番（クラス名が Waku1, Waku2 ... の形式）
+            waku_td = tr.select_one("td[class*='Waku']")
             post_position = 0
             if waku_td:
                 try:
@@ -216,8 +216,8 @@ class NetkeibaScraper(BaseScraper):
                 except ValueError:
                     pass
 
-            # 馬番
-            umaban_td = tr.select_one("td.Umaban")
+            # 馬番（クラス名が Umaban1, Umaban2 ... の形式）
+            umaban_td = tr.select_one("td[class*='Umaban']")
             horse_number = 0
             if umaban_td:
                 try:
@@ -238,7 +238,7 @@ class NetkeibaScraper(BaseScraper):
             horse_id_m = re.search(r"/horse/(\w+)", horse_href)
             horse_id = horse_id_m.group(1) if horse_id_m else ""
 
-            # 斤量
+            # 斤量（td.Kinryo または6番目のtd）
             kinryo_td = tr.select_one("td.Kinryo")
             weight = 0.0
             if kinryo_td:
@@ -246,6 +246,13 @@ class NetkeibaScraper(BaseScraper):
                     weight = float(kinryo_td.get_text(strip=True))
                 except ValueError:
                     pass
+            else:
+                tds = tr.find_all("td")
+                if len(tds) > 5:
+                    try:
+                        weight = float(tds[5].get_text(strip=True))
+                    except ValueError:
+                        pass
 
             # 騎手
             jockey_link = tr.select_one("a[href*='/jockey/']")
@@ -306,7 +313,7 @@ class NetkeibaScraper(BaseScraper):
         # Step 1: メインプロフィールページ（静的HTML）
         profile_url = f"{self.DB_URL}/horse/{horse_id}/"
         try:
-            html = await self.fetch(profile_url)
+            html = await self.fetch(profile_url, encoding="euc-jp")
         except Exception as e:
             self.logger.warning("馬プロフィール取得失敗 (horse_id=%s): %s", horse_id, e)
             return {}
@@ -409,7 +416,7 @@ class NetkeibaScraper(BaseScraper):
         """
         url = f"{self.DB_URL}/horse/ajax_horse_results.html?id={horse_id}"
         try:
-            html = await self.fetch(url)
+            html = await self.fetch(url, encoding="euc-jp")
         except Exception as e:
             self.logger.warning("過去成績取得失敗 (horse_id=%s): %s", horse_id, e)
             return []
@@ -442,18 +449,20 @@ class NetkeibaScraper(BaseScraper):
                 return _cells[idx].get_text(strip=True)
 
             # カラム位置が特定できない場合は位置でフォールバック
-            # 一般的なnetkeiba成績テーブルの列順:
-            # 0:日付, 1:開催, 2:天気, 3:R, 4:レース名, 5:映像, 6:頭数, 7:枠, 8:馬番,
-            # 9:オッズ, 10:人気, 11:着順, 12:騎手, 13:斤量, 14:距離, 15:馬場,
-            # 16:馬場指数, 17:タイム, 18:着差, 19:タイム指数, 20:上3F, 21:コメント
+            # netkeiba成績テーブルの列順（33列）:
+            # 0:日付, 1:開催, 2:天気, 3:R, 4:レース名, 5:映像, 6:頭数,
+            # 7:枠番, 8:馬番, 9:オッズ, 10:人気, 11:着順, 12:騎手,
+            # 13:斤量, 14:距離, 15:水分量, 16:馬場, 17:馬場指数,
+            # 18:タイム, 19:着差, 20-24:各種指数, 25:通過, 26:ペース,
+            # 27:上り, 28:馬体重, 29-32:その他
             date_str = _cell("日付", 0)
             race_name = _cell("レース名", 4)
             finish_pos_str = _cell("着順", 11)
             jockey_name = _cell("騎手", 12)
             dist_str = _cell("距離", 14)
-            track_cond = _cell("馬場", 15)
-            time_str = _cell("タイム", 17)
-            last3f_str = _cell("上3F", 20)
+            track_cond = _cell("馬場", 16)
+            time_str = _cell("タイム", 18)
+            last3f_str = _cell("上り", 27)
 
             # 着順が数値でない行はスキップ（中止, 除外, 取消 等）
             try:
@@ -469,7 +478,7 @@ class NetkeibaScraper(BaseScraper):
                 race_link = cells[race_name_idx].find("a", href=True)
             if race_link:
                 href = race_link.get("href", "")
-                rid_m = re.search(r"race_id=(\d+)", href)
+                rid_m = re.search(r"(?:race_id=|/race/)(\d+)", href)
                 if rid_m:
                     race_id = rid_m.group(1)
 

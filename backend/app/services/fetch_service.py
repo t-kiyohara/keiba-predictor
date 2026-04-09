@@ -9,7 +9,7 @@ from app.config import settings
 from app.models import Entry, Horse, Jockey, Race, Result, Trainer
 from app.scoring.engine import ScoringEngine
 from app.scrapers.jra import JraScraper, get_target_race_dates
-from app.scrapers.netkeiba import NetkeibaScraper
+from app.scrapers.netkeiba import NetkeibaScraper, _venue_from_race_id
 from app.scrapers.weather import WeatherClient
 
 logger = logging.getLogger(__name__)
@@ -50,20 +50,36 @@ class FetchService:
             date_str = target_date.isoformat()
             netkeiba_race_map[date_str] = nb_list
 
-        # JRAの重賞データとnetkeibaのrace_idをマッチング（race_numberで突合）
+        # JRAの重賞データとnetkeibaのrace_idをマッチング
+        # （race_number + venue で突合）
         for gr in graded_races:
             race_date = gr.get("date")
             race_number = gr.get("race_number", 11)
+            jra_venue = gr.get("venue", "")
             if not race_date:
                 continue
             date_str = (
-                race_date.isoformat() if isinstance(race_date, date) else race_date
+                race_date.isoformat()
+                if isinstance(race_date, date)
+                else race_date
             )
             nb_races = netkeiba_race_map.get(date_str, [])
+            # 1st pass: race_number + venue で完全一致
             for nb_race in nb_races:
-                if nb_race.get("race_number") == race_number:
-                    gr["race_id"] = nb_race["race_id"]
+                nb_rid = nb_race.get("race_id", "")
+                nb_venue = _venue_from_race_id(nb_rid)
+                if (
+                    nb_race.get("race_number") == race_number
+                    and nb_venue == jra_venue
+                ):
+                    gr["race_id"] = nb_rid
                     break
+            else:
+                # 2nd pass: race_number のみで照合（venue不一致時のフォールバック）
+                for nb_race in nb_races:
+                    if nb_race.get("race_number") == race_number:
+                        gr["race_id"] = nb_race["race_id"]
+                        break
 
         if not graded_races:
             # スクレイパー未実装期間: 既存データでスコアリングのみ実行

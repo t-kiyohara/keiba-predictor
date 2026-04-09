@@ -19,31 +19,51 @@ from app.scrapers.weather import VENUE_COORDINATES, WEATHER_JP, WeatherClient
 # JRA今週の重賞ページフィクスチャ（年はdate.today().yearに合わせる）
 JRA_THISWEEK_HTML = """
 <html><body>
-<div class="thisweek">
-  <div class="race_block">
-    <p>4月13日（日曜日）</p>
-    <h3>天皇賞（春）(GⅠ)</h3>
-    <p>京都競馬場 / 3200メートル / 芝</p>
+<div class="content">
+  <div class="race_unit g1">
+    <div class="head">
+      <dt>4月13日（日曜）</dt>
+      <dd><div class="race_title"><div class="txt">
+        <h3>天皇賞（春）（GⅠ）</h3>
+        <p>京都競馬場　芝3200メートル</p>
+      </div></div></dd>
+    </div>
   </div>
-  <div class="race_block">
-    <p>4月12日（土曜日）</p>
-    <h3>青葉賞(GⅡ)</h3>
-    <p>東京競馬場 / 2400メートル / 芝</p>
+  <div class="race_unit g2">
+    <div class="head">
+      <dt>4月12日（土曜）</dt>
+      <dd><div class="race_title"><div class="txt">
+        <h3>青葉賞（GⅡ）</h3>
+        <p>東京競馬場　芝2400メートル</p>
+      </div></div></dd>
+    </div>
   </div>
-  <div class="race_block">
-    <p>4月13日（日曜日）</p>
-    <h3>フローラステークス(GⅡ)</h3>
-    <p>東京競馬場 / 2000メートル / 芝</p>
+  <div class="race_unit g2">
+    <div class="head">
+      <dt>4月13日（日曜）</dt>
+      <dd><div class="race_title"><div class="txt">
+        <h3>フローラステークス（GⅡ）</h3>
+        <p>東京競馬場　芝2000メートル</p>
+      </div></div></dd>
+    </div>
   </div>
-  <div class="race_block">
-    <p>5月3日（土曜日）</p>
-    <h3>NHKマイルカップ(GⅠ)</h3>
-    <p>東京競馬場 / 1600メートル / 芝</p>
+  <div class="race_unit g1">
+    <div class="head">
+      <dt>5月3日（土曜）</dt>
+      <dd><div class="race_title"><div class="txt">
+        <h3>NHKマイルカップ（GⅠ）</h3>
+        <p>東京競馬場　芝1600メートル</p>
+      </div></div></dd>
+    </div>
   </div>
-  <div class="race_block">
-    <p>4月12日（土曜日）</p>
-    <h3>福島牝馬ステークス(GⅢ)</h3>
-    <p>福島競馬場 / 1800メートル / 芝</p>
+  <div class="race_unit g3">
+    <div class="head">
+      <dt>4月12日（土曜）</dt>
+      <dd><div class="race_title"><div class="txt">
+        <h3>福島牝馬ステークス（GⅢ）</h3>
+        <p>福島競馬場　芝1800メートル</p>
+      </div></div></dd>
+    </div>
   </div>
 </div>
 </body></html>
@@ -52,10 +72,16 @@ JRA_THISWEEK_HTML = """
 # JRA 障害グレードのテスト用HTML
 JRA_JUMP_HTML = """
 <html><body>
-<div>
-  <p>4月13日（日曜日）</p>
-  <h3>阪神スプリングジャンプ(J・GⅡ)</h3>
-  <p>阪神競馬場 / 3900メートル / 障害</p>
+<div class="content">
+  <div class="race_unit">
+    <div class="head">
+      <dt>4月13日（日曜）</dt>
+      <dd><div class="race_title"><div class="txt">
+        <h3>阪神スプリングジャンプ（J・GⅡ）</h3>
+        <p>阪神競馬場　芝3900メートル</p>
+      </div></div></dd>
+    </div>
+  </div>
 </div>
 </body></html>
 """
@@ -76,35 +102,42 @@ SHUTUBA_HTML = """
 <html><body>
 <div class="RaceData01">15:45発走 / 2000m (芝) / 天気:晴</div>
 <h1 class="RaceName">テストステークス(GⅠ)</h1>
-<table class="Shutuba_Table"><tbody>
-<tr>
-  <td class="Waku">1</td>
-  <td class="Umaban">1</td>
+<table class="Shutuba_Table">
+<tr class="Header"><th class="Waku">枠</th><th class="Umaban">馬番</th>
+<th class="CheckMark">印</th><th class="HorseInfo">馬名</th>
+<th class="Barei">性齢</th><th class="Dredging">斤量</th>
+<th class="Jockey">騎手</th><th class="Trainer">厩舎</th></tr>
+<tr class="HorseList">
+  <td class="Waku1 Txt_C">1</td>
+  <td class="Umaban1 Txt_C">1</td>
+  <td class="CheckMark">--</td>
   <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2019105943">テスト馬A</a></td>
-  <td class="Barei">牡4</td>
-  <td class="Kinryo">58.0</td>
-  <td><a href="https://db.netkeiba.com/jockey/result/recent/01167/">テスト騎手A</a></td>
-  <td><a href="https://db.netkeiba.com/trainer/result/recent/01234/">テスト調教師A</a></td>
+  <td class="Barei Txt_C">牡4</td>
+  <td class="Txt_C">58.0</td>
+  <td class="Jockey"><a href="https://db.netkeiba.com/jockey/result/recent/01167/">テスト騎手A</a></td>
+  <td class="Trainer"><a href="https://db.netkeiba.com/trainer/result/recent/01234/">テスト調教師A</a></td>
 </tr>
-<tr>
-  <td class="Waku">2</td>
-  <td class="Umaban">2</td>
+<tr class="HorseList">
+  <td class="Waku2 Txt_C">2</td>
+  <td class="Umaban2 Txt_C">2</td>
+  <td class="CheckMark">--</td>
   <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2020101234">テスト馬B</a></td>
-  <td class="Barei">牝3</td>
-  <td class="Kinryo">54.0</td>
-  <td><a href="https://db.netkeiba.com/jockey/result/recent/00422/">テスト騎手B</a></td>
-  <td><a href="https://db.netkeiba.com/trainer/result/recent/01046/">テスト調教師B</a></td>
+  <td class="Barei Txt_C">牝3</td>
+  <td class="Txt_C">54.0</td>
+  <td class="Jockey"><a href="https://db.netkeiba.com/jockey/result/recent/00422/">テスト騎手B</a></td>
+  <td class="Trainer"><a href="https://db.netkeiba.com/trainer/result/recent/01046/">テスト調教師B</a></td>
 </tr>
-<tr class="Cancel">
-  <td class="Waku">3</td>
-  <td class="Umaban">3</td>
+<tr class="HorseList Cancel">
+  <td class="Waku3 Txt_C">3</td>
+  <td class="Umaban3 Txt_C">3</td>
+  <td class="CheckMark">--</td>
   <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2020109999">取消馬C</a></td>
-  <td class="Barei">牡4</td>
-  <td class="Kinryo">58.0</td>
-  <td><a href="https://db.netkeiba.com/jockey/result/recent/01999/">テスト騎手C</a></td>
-  <td><a href="https://db.netkeiba.com/trainer/result/recent/01999/">テスト調教師C</a></td>
+  <td class="Barei Txt_C">牡4</td>
+  <td class="Txt_C">58.0</td>
+  <td class="Jockey"><a href="https://db.netkeiba.com/jockey/result/recent/01999/">テスト騎手C</a></td>
+  <td class="Trainer"><a href="https://db.netkeiba.com/trainer/result/recent/01999/">テスト調教師C</a></td>
 </tr>
-</tbody></table>
+</table>
 </body></html>
 """
 
@@ -122,16 +155,18 @@ SHUTUBA_DIRT_HTML = """
 <html><body>
 <div class="RaceData01">16:00発走 / 1600m (ダート) / 天気:曇り</div>
 <h1 class="RaceName">ダートレース(GⅡ)</h1>
-<table class="Shutuba_Table"><tbody>
-<tr>
-  <td class="Waku">1</td>
-  <td class="Umaban">1</td>
+<table class="Shutuba_Table">
+<tr class="HorseList">
+  <td class="Waku1 Txt_C">1</td>
+  <td class="Umaban1 Txt_C">1</td>
+  <td class="CheckMark">--</td>
   <td class="HorseInfo"><a href="https://db.netkeiba.com/horse/2021101111">ダート馬A</a></td>
-  <td class="Kinryo">57.0</td>
-  <td><a href="https://db.netkeiba.com/jockey/result/recent/01001/">騎手X</a></td>
-  <td><a href="https://db.netkeiba.com/trainer/result/recent/02001/">調教師X</a></td>
+  <td class="Barei Txt_C">牡4</td>
+  <td class="Txt_C">57.0</td>
+  <td class="Jockey"><a href="https://db.netkeiba.com/jockey/result/recent/01001/">騎手X</a></td>
+  <td class="Trainer"><a href="https://db.netkeiba.com/trainer/result/recent/02001/">調教師X</a></td>
 </tr>
-</tbody></table>
+</table>
 </body></html>
 """
 
@@ -172,36 +207,45 @@ HORSE_PEDIGREE_HTML = """
 </body></html>
 """
 
-# 過去成績フィクスチャ
+# 過去成績フィクスチャ（実際のnetkeiba AJAXテーブル構造に合わせた33列）
 HORSE_RESULTS_HTML = """
 <html><body>
 <table>
 <tr>
   <th>日付</th><th>開催</th><th>天気</th><th>R</th><th>レース名</th>
-  <th>映像</th><th>頭数</th><th>枠</th><th>馬番</th><th>オッズ</th><th>人気</th>
-  <th>着順</th><th>騎手</th><th>斤量</th><th>距離</th><th>馬場</th>
-  <th>馬場指数</th><th>タイム</th><th>着差</th><th>タイム指数</th><th>上3F</th><th>コメント</th>
+  <th>映像</th><th>頭数</th><th>枠番</th><th>馬番</th><th>オッズ</th><th>人気</th>
+  <th>着順</th><th>騎手</th><th>斤量</th><th>距離</th><th>水分量</th><th>馬場</th>
+  <th>馬場指数</th><th>タイム</th><th>着差</th><th>ﾀｲﾑ指数</th><th>ﾀｲﾑ指数M</th>
+  <th>ｽﾀｰﾄ指数</th><th>追走指数</th><th>上がり指数</th><th>通過</th><th>ペース</th>
+  <th>上り</th><th>馬体重</th><th>厩舎ｺﾒﾝﾄ</th><th>備考</th>
+  <th>勝ち馬(2着馬)</th><th>賞金</th>
 </tr>
 <tr>
   <td>2024/04/28</td><td>阪神1回1日</td><td>晴</td><td>11</td>
-  <td><a href="https://db.netkeiba.com/race/?race_id=202409020511">天皇賞（春）</a></td>
+  <td><a href="https://db.netkeiba.com/race/202409020511/">天皇賞（春）</a></td>
   <td></td><td>18</td><td>3</td><td>5</td><td>3.5</td><td>2</td>
-  <td>1</td><td>テスト騎手A</td><td>58.0</td><td>芝3200</td><td>良</td>
-  <td>100</td><td>3:14.2</td><td>-</td><td>120</td><td>34.8</td><td></td>
+  <td>1</td><td>テスト騎手A</td><td>58.0</td><td>芝3200</td><td></td><td>良</td>
+  <td>100</td><td>3:14.2</td><td>-</td><td>120</td><td>120</td>
+  <td>89</td><td>83</td><td>108</td><td>5-5</td><td>36.0-34.0</td>
+  <td>34.8</td><td>480(+2)</td><td></td><td></td><td></td><td>10000.0</td>
 </tr>
 <tr>
   <td>2024/02/10</td><td>東京1回2日</td><td>晴</td><td>9</td>
-  <td><a href="https://db.netkeiba.com/race/?race_id=202405050905">日経新春杯</a></td>
+  <td><a href="https://db.netkeiba.com/race/202405050905/">日経新春杯</a></td>
   <td></td><td>16</td><td>5</td><td>9</td><td>5.1</td><td>3</td>
-  <td>2</td><td>テスト騎手B</td><td>58.0</td><td>芝2200</td><td>良</td>
-  <td>98</td><td>2:11.5</td><td>0.4</td><td>115</td><td>35.2</td><td></td>
+  <td>2</td><td>テスト騎手B</td><td>58.0</td><td>芝2200</td><td></td><td>良</td>
+  <td>98</td><td>2:11.5</td><td>0.4</td><td>115</td><td>115</td>
+  <td>88</td><td>80</td><td>105</td><td>3-3</td><td>35.0-35.0</td>
+  <td>35.2</td><td>478(0)</td><td></td><td></td><td></td><td>5000.0</td>
 </tr>
 <tr>
   <td>2023/12/25</td><td>中山1回1日</td><td>曇</td><td>10</td>
-  <td><a href="https://db.netkeiba.com/race/?race_id=202406031010">有馬記念</a></td>
+  <td><a href="https://db.netkeiba.com/race/202406031010/">有馬記念</a></td>
   <td></td><td>16</td><td>2</td><td>3</td><td>8.0</td><td>4</td>
-  <td>中止</td><td>テスト騎手A</td><td>58.0</td><td>芝2500</td><td>良</td>
-  <td></td><td></td><td></td><td></td><td></td><td>競走中止</td>
+  <td>中止</td><td>テスト騎手A</td><td>58.0</td><td>芝2500</td><td></td><td>良</td>
+  <td></td><td></td><td></td><td></td><td></td>
+  <td></td><td></td><td></td><td></td><td></td>
+  <td></td><td></td><td></td><td>競走中止</td><td></td><td></td>
 </tr>
 </table>
 </body></html>
