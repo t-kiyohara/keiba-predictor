@@ -1,20 +1,17 @@
-import os
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from pydantic_settings import BaseSettings
 
 
-class Settings:
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "sqlite:///./db/keiba.sqlite3"
-    )
-    OPENWEATHER_API_KEY: str = os.getenv("OPENWEATHER_API_KEY", "")
+class Settings(BaseSettings):
+    DATABASE_URL: str = "sqlite:///./db/keiba.sqlite3"
+    OPENWEATHER_API_KEY: str = ""
     # 許可するCORSオリジン。環境変数 CORS_ORIGINS でカンマ区切りの文字列として上書き可能
-    cors_origins: list[str] = [
-        origin.strip()
-        for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
-    ]
+    CORS_ORIGINS: str = "http://localhost:5173"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",")]
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 settings = Settings()

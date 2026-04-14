@@ -1,9 +1,11 @@
-"""各スコアリングファクターの算出関数群"""
+"""各スコアリングファクターの算出関数群
 
-from sqlalchemy.orm import Session
+全てのファクター関数はDBセッションではなく事前ロード済みデータを受け取る。
+エンジン側で全馬分のデータを一括プリロードし、N+1クエリを解消する。
+"""
 
-from app.models import Race, Horse, Result, Entry, Jockey, Trainer
-from app.scoring.weights import NEUTRAL_SCORE, DISTANCE_TOLERANCE_M
+from app.models import Horse
+from app.scoring.weights import DISTANCE_TOLERANCE_M, NEUTRAL_SCORE
 
 
 def _clamp(score: float) -> float:
@@ -36,6 +38,7 @@ def _win_rate_score(
     """勝率・連対率・複勝率から加重スコアを算出する。
 
     結果が空の場合は NEUTRAL_SCORE を返す。
+    results は finish_position 属性を持つ Result オブジェクトのリスト。
     """
     if not results:
         return NEUTRAL_SCORE
@@ -47,49 +50,35 @@ def _win_rate_score(
     return _clamp(raw)
 
 
-def score_recent_form(db: Session, horse_id: str, limit: int = 5) -> float:
+def score_recent_form(
+    horse_results: list[tuple],
+    race_last3f: dict[str, list[float]],
+    limit: int = 5,
+) -> float:
     """近走成績スコア（直近N走の着順と上がり3Fから算出）
 
-    - 直近の結果をlimit件取得（results テーブルから race.date 降順）
+    Args:
+        horse_results: (Result, Race) のリスト（race.date 降順でソート済み）
+        race_last3f: race_id → そのレース全出走馬の last_3f 昇順リスト
+        limit: 直近N走
+
     - 着順スコア: 1着=100, 2着=85, 3着=70, 4着=55, 5着=40, 6着以下=max(0, 40-5*(pos-5))
     - 上がり3Fボーナス: 出走レースの中で上がり3F最速なら+10, 2位なら+5
-    - 最終スコア = 着順スコアの平均 + 上がり3Fボーナスの平均
-    - 上限100にclamp
+    - 最終スコア = 着順スコアの平均 + 上がり3Fボーナスの平均（上限100）
     """
-    # 直近N走を取得（race.date 降順）
-    recent_results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .filter(Result.horse_id == horse_id)
-        .filter(Result.finish_position.isnot(None))
-        .order_by(Race.date.desc())
-        .limit(limit)
-        .all()
-    )
-
-    if not recent_results:
+    recent = horse_results[:limit]
+    if not recent:
         return NEUTRAL_SCORE
 
     position_scores = []
     last3f_bonuses = []
 
-    for result in recent_results:
-        # 着順スコア
-        pos = result.finish_position
-        position_scores.append(_position_score(pos))
+    for result, _race in recent:
+        position_scores.append(_position_score(result.finish_position))
 
-        # 上がり3Fボーナス: 同じレース内での順位を調べる
         bonus = 0.0
         if result.last_3f is not None:
-            # 同一レースの上がり3F一覧（NULLを除く、昇順=速い順）
-            race_last3f_list = (
-                db.query(Result.last_3f)
-                .filter(Result.race_id == result.race_id)
-                .filter(Result.last_3f.isnot(None))
-                .order_by(Result.last_3f.asc())
-                .all()
-            )
-            times = [r[0] for r in race_last3f_list]
+            times = race_last3f.get(result.race_id, [])
             if times:
                 if times[0] == result.last_3f:
                     bonus = 10.0
@@ -99,35 +88,31 @@ def score_recent_form(db: Session, horse_id: str, limit: int = 5) -> float:
 
     avg_position_score = sum(position_scores) / len(position_scores)
     avg_bonus = sum(last3f_bonuses) / len(last3f_bonuses)
-
     return _clamp(avg_position_score + avg_bonus)
 
 
-def score_same_race(db: Session, horse_id: str, race_name: str) -> float:
+def score_same_race(
+    horse_results: list[tuple],
+    race_name: str,
+) -> float:
     """同レース成績スコア
 
-    - 同じレース名(race.name に race_name を含む)での過去結果を取得
+    Args:
+        horse_results: (Result, Race) のリスト
+        race_name: 対象レース名（部分一致）
+
     - 出走なし → 50（中立スコア）
     - 1着経験あり → 90+, 2着 → 75+, 3着 → 65+
     - 複数回出走の場合は平均着順で算出
     """
-    results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .filter(Result.horse_id == horse_id)
-        .filter(Race.name.contains(race_name))
-        .filter(Result.finish_position.isnot(None))
-        .all()
-    )
-
-    if not results:
+    matching = [r for r, race in horse_results if race_name in race.name]
+    if not matching:
         return NEUTRAL_SCORE
 
-    scores = [_position_score(r.finish_position) for r in results]
+    scores = [_position_score(r.finish_position) for r in matching]
     avg_score = sum(scores) / len(scores)
 
-    # 上位入賞経験ボーナス
-    best_pos = min(r.finish_position for r in results)
+    best_pos = min(r.finish_position for r in matching)
     if best_pos == 1:
         base = 90.0
     elif best_pos == 2:
@@ -137,154 +122,104 @@ def score_same_race(db: Session, horse_id: str, race_name: str) -> float:
     else:
         base = avg_score
 
-    # ベーススコアと平均スコアの中間値
-    score = (base + avg_score) / 2.0
-    return _clamp(score)
+    return _clamp((base + avg_score) / 2.0)
 
 
-def score_course_aptitude(db: Session, horse_id: str, venue: str, distance: int) -> float:
+def score_course_aptitude(
+    horse_results: list[tuple],
+    venue: str,
+    distance: int,
+) -> float:
     """コース適性スコア
+
+    Args:
+        horse_results: (Result, Race) のリスト
+        venue: 競馬場名
+        distance: 距離（メートル）
 
     - 同競馬場(race.venue)での成績
     - 同距離(race.distance, ±DISTANCE_TOLERANCE_M許容)での成績
     - 両方の条件に合致するレースほど高いウェイト
-    - 勝率 * 60 + 連対率 * 30 + 複勝率 * 10 を基本算出式に
     """
-    # 同競馬場かつ同距離（±DISTANCE_TOLERANCE_M）での成績（ウェイト高）
-    both_results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .filter(Result.horse_id == horse_id)
-        .filter(Race.venue == venue)
-        .filter(Race.distance >= distance - DISTANCE_TOLERANCE_M)
-        .filter(Race.distance <= distance + DISTANCE_TOLERANCE_M)
-        .filter(Result.finish_position.isnot(None))
-        .all()
-    )
+    both = [r for r, race in horse_results
+            if race.venue == venue
+            and abs(race.distance - distance) <= DISTANCE_TOLERANCE_M]
+    venue_only = [r for r, race in horse_results if race.venue == venue]
+    dist_only = [r for r, race in horse_results
+                 if abs(race.distance - distance) <= DISTANCE_TOLERANCE_M]
 
-    # 同競馬場のみ
-    venue_results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .filter(Result.horse_id == horse_id)
-        .filter(Race.venue == venue)
-        .filter(Result.finish_position.isnot(None))
-        .all()
-    )
+    score_both = _win_rate_score(both) if both else None
+    score_venue = _win_rate_score(venue_only) if venue_only else None
+    score_dist = _win_rate_score(dist_only) if dist_only else None
 
-    # 同距離のみ（±DISTANCE_TOLERANCE_M）
-    distance_results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .filter(Result.horse_id == horse_id)
-        .filter(Race.distance >= distance - DISTANCE_TOLERANCE_M)
-        .filter(Race.distance <= distance + DISTANCE_TOLERANCE_M)
-        .filter(Result.finish_position.isnot(None))
-        .all()
-    )
-
-    def calc_score(results):
-        """結果リストから勝率ベーススコアを算出する（データなしは None）"""
-        if not results:
-            return None
-        return _win_rate_score(results)
-
-    score_both = calc_score(both_results)
-    score_venue = calc_score(venue_results)
-    score_distance = calc_score(distance_results)
-
-    # データがある組み合わせで加重平均
     if score_both is not None:
-        # 両条件一致を最高ウェイト
         parts = [score_both * 0.6]
         weight_sum = 0.6
         if score_venue is not None:
             parts.append(score_venue * 0.25)
             weight_sum += 0.25
-        if score_distance is not None:
-            parts.append(score_distance * 0.15)
+        if score_dist is not None:
+            parts.append(score_dist * 0.15)
             weight_sum += 0.15
-        score = sum(parts) / weight_sum
-    elif score_venue is not None and score_distance is not None:
-        score = (score_venue + score_distance) / 2.0
+        return _clamp(sum(parts) / weight_sum)
+    elif score_venue is not None and score_dist is not None:
+        return _clamp((score_venue + score_dist) / 2.0)
     elif score_venue is not None:
-        score = score_venue
-    elif score_distance is not None:
-        score = score_distance
+        return _clamp(score_venue)
+    elif score_dist is not None:
+        return _clamp(score_dist)
     else:
         return NEUTRAL_SCORE
 
-    return _clamp(score)
 
-
-def score_track_condition(db: Session, horse_id: str, track_condition: str) -> float:
+def score_track_condition(
+    horse_results: list[tuple],
+    track_condition: str,
+) -> float:
     """馬場状態適性スコア
 
-    - 同じ馬場状態(result → race.track_condition)での成績
+    Args:
+        horse_results: (Result, Race) のリスト
+        track_condition: 馬場状態（良/稍重/重/不良）
+
+    - 同じ馬場状態(race.track_condition)での成績
     - 勝率ベースでスコア化
     - 当該馬場状態でのデータなし → NEUTRAL_SCORE
     """
-    results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .filter(Result.horse_id == horse_id)
-        .filter(Race.track_condition == track_condition)
-        .filter(Result.finish_position.isnot(None))
-        .all()
-    )
-
-    if not results:
+    matching = [r for r, race in horse_results
+                if race.track_condition == track_condition]
+    if not matching:
         return NEUTRAL_SCORE
-
-    return _win_rate_score(results)
+    return _win_rate_score(matching)
 
 
 def _score_person(
-    db: Session,
-    person_id: str | None,
-    person_id_col,
+    person_results: list[tuple],
     venue: str,
     grade: str,
 ) -> float:
     """騎手または調教師のスコアを算出する共通ロジック。
 
+    Args:
+        person_results: (Result, Race) のリスト（対象人物の全成績）
+        venue: 競馬場名
+        grade: グレード（G1/G2/G3）
+
     venue別勝率スコアと grade別勝率スコアを50:50で合算する。
     """
-    if not person_id:
+    if not person_results:
         return NEUTRAL_SCORE
 
-    def calc_win_rate_score(results):
-        """結果リストから勝率ベーススコアを算出する（データなしは None）"""
-        if not results:
+    def calc(results_list):
+        if not results_list:
             return None
-        return _win_rate_score(results, w_win=60, w_rentai=25, w_fukusho=15)
+        return _win_rate_score(results_list, w_win=60, w_rentai=25, w_fukusho=15)
 
-    # 同競馬場での成績（distinct で重複排除）
-    venue_results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .join(Entry, (Entry.race_id == Result.race_id) & (Entry.horse_id == Result.horse_id))
-        .filter(person_id_col == person_id)
-        .filter(Race.venue == venue)
-        .filter(Result.finish_position.isnot(None))
-        .distinct()
-        .all()
-    )
+    venue_results = [r for r, race in person_results if race.venue == venue]
+    grade_results = [r for r, race in person_results if race.grade == grade]
 
-    # 同グレードでの成績
-    grade_results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .join(Entry, (Entry.race_id == Result.race_id) & (Entry.horse_id == Result.horse_id))
-        .filter(person_id_col == person_id)
-        .filter(Race.grade == grade)
-        .filter(Result.finish_position.isnot(None))
-        .distinct()
-        .all()
-    )
-
-    venue_score = calc_win_rate_score(venue_results)
-    grade_score = calc_win_rate_score(grade_results)
+    venue_score = calc(venue_results)
+    grade_score = calc(grade_results)
 
     if venue_score is not None and grade_score is not None:
         return _clamp((venue_score + grade_score) / 2.0)
@@ -296,80 +231,87 @@ def _score_person(
         return NEUTRAL_SCORE
 
 
-def score_jockey(db: Session, jockey_id: str, venue: str, grade: str) -> float:
+def score_jockey(
+    jockey_results: list[tuple],
+    venue: str,
+    grade: str,
+) -> float:
     """騎手成績スコア
+
+    Args:
+        jockey_results: 騎手の (Result, Race) リスト（空リストならNEUTRAL_SCORE）
+        venue: 競馬場名
+        grade: グレード
 
     - 同競馬場での勝率
     - 同グレード(G1/G2/G3)での勝率
     - 両方を50:50で合成
     """
-    return _score_person(db, jockey_id, Entry.jockey_id, venue, grade)
+    return _score_person(jockey_results, venue, grade)
 
 
-def score_trainer(db: Session, trainer_id: str, venue: str, grade: str) -> float:
+def score_trainer(
+    trainer_results: list[tuple],
+    venue: str,
+    grade: str,
+) -> float:
     """調教師成績スコア
+
+    Args:
+        trainer_results: 調教師の (Result, Race) リスト（空リストならNEUTRAL_SCORE）
+        venue: 競馬場名
+        grade: グレード
 
     - 同競馬場での勝率
     - 同グレードでの勝率
     - 両方を50:50で合成
     """
-    return _score_person(db, trainer_id, Entry.trainer_id, venue, grade)
+    return _score_person(trainer_results, venue, grade)
 
 
-def score_bloodline(db: Session, horse_id: str, venue: str, distance: int, course_type: str) -> float:
+def score_bloodline(
+    horse: Horse | None,
+    sire_results: list[tuple],
+    dam_sire_results: list[tuple],
+    venue: str,
+    distance: int,
+    course_type: str,
+) -> float:
     """血統適性スコア
+
+    Args:
+        horse: 対象馬オブジェクト（sire/dam_sire フィールドを使用）
+        sire_results: 同父を持つ馬群の (Result, Race) リスト
+        dam_sire_results: 同母父を持つ馬群の (Result, Race) リスト
+        venue: 競馬場名
+        distance: 距離（メートル）
+        course_type: コース種別（芝/ダート）
 
     - 同じ父(sire)を持つ馬の同コース(場/距離/芝ダート)での成績
     - 同じ母父(dam_sire)を持つ馬の同コースでの成績
     - 父スコア * 0.6 + 母父スコア * 0.4
-    - 勝率・連対率ベース
     """
-    # 対象馬の血統情報を取得
-    horse = db.query(Horse).filter(Horse.id == horse_id).first()
     if horse is None:
         return NEUTRAL_SCORE
 
-    def calc_bloodline_score(sire_name: str, field: str) -> float | None:
-        """指定した父または母父を持つ馬群の同コース成績"""
-        if not sire_name:
+    def filter_course(results: list[tuple]) -> list:
+        return [
+            r for r, race in results
+            if race.venue == venue
+            and abs(race.distance - distance) <= DISTANCE_TOLERANCE_M
+            and race.course_type == course_type
+        ]
+
+    def calc_bloodline_score(results_list: list) -> float | None:
+        if not results_list:
             return None
+        total = len(results_list)
+        wins = sum(1 for r in results_list if r.finish_position == 1)
+        top2 = sum(1 for r in results_list if r.finish_position <= 2)
+        return _clamp(wins / total * 60.0 + top2 / total * 40.0)
 
-        # 同じ父/母父を持つ馬のIDを取得（自馬を除外）
-        if field == "sire":
-            sibling_horses = db.query(Horse.id).filter(Horse.sire == sire_name, Horse.id != horse_id).all()
-        else:
-            sibling_horses = db.query(Horse.id).filter(Horse.dam_sire == sire_name, Horse.id != horse_id).all()
-
-        sibling_ids = [h[0] for h in sibling_horses]
-        if not sibling_ids:
-            return None
-
-        # 同コース（場・距離±DISTANCE_TOLERANCE_M・芝ダート）での成績
-        results = (
-            db.query(Result)
-            .join(Race, Result.race_id == Race.id)
-            .filter(Result.horse_id.in_(sibling_ids))
-            .filter(Race.venue == venue)
-            .filter(Race.distance >= distance - DISTANCE_TOLERANCE_M)
-            .filter(Race.distance <= distance + DISTANCE_TOLERANCE_M)
-            .filter(Race.course_type == course_type)
-            .filter(Result.finish_position.isnot(None))
-            .all()
-        )
-
-        if not results:
-            return None
-
-        total = len(results)
-        wins = sum(1 for r in results if r.finish_position == 1)
-        top2 = sum(1 for r in results if r.finish_position <= 2)
-        win_rate = wins / total
-        rentai_rate = top2 / total
-        # 勝率60% + 連対率40% で加重スコア算出（fukushoは使用しない）
-        return _clamp(win_rate * 60.0 + rentai_rate * 40.0)
-
-    sire_score = calc_bloodline_score(horse.sire, "sire")
-    dam_sire_score = calc_bloodline_score(horse.dam_sire, "dam_sire")
+    sire_score = calc_bloodline_score(filter_course(sire_results)) if horse.sire else None
+    dam_sire_score = calc_bloodline_score(filter_course(dam_sire_results)) if horse.dam_sire else None
 
     if sire_score is not None and dam_sire_score is not None:
         return _clamp(sire_score * 0.6 + dam_sire_score * 0.4)
@@ -381,43 +323,31 @@ def score_bloodline(db: Session, horse_id: str, venue: str, distance: int, cours
         return NEUTRAL_SCORE
 
 
-def score_overall(db: Session, horse_id: str) -> float:
+def score_overall(
+    horse_results: list[tuple],
+) -> float:
     """総合実績スコア
+
+    Args:
+        horse_results: 全 (Result, Race) のリスト
 
     - 通算勝率
     - 重賞(G1/G2/G3)での着順
     - 勝率 * 50 + 重賞好走率 * 50
     """
-    all_results = (
-        db.query(Result)
-        .filter(Result.horse_id == horse_id)
-        .filter(Result.finish_position.isnot(None))
-        .all()
-    )
-
-    if not all_results:
+    if not horse_results:
         return NEUTRAL_SCORE
 
+    all_results = [r for r, _ in horse_results]
     total = len(all_results)
     wins = sum(1 for r in all_results if r.finish_position == 1)
     win_rate = wins / total
 
-    # 重賞（G1/G2/G3）での好走率（3着以内）
-    graded_results = (
-        db.query(Result)
-        .join(Race, Result.race_id == Race.id)
-        .filter(Result.horse_id == horse_id)
-        .filter(Race.grade.in_(["G1", "G2", "G3"]))
-        .filter(Result.finish_position.isnot(None))
-        .all()
-    )
-
-    if graded_results:
-        graded_total = len(graded_results)
-        graded_top3 = sum(1 for r in graded_results if r.finish_position <= 3)
-        graded_rate = graded_top3 / graded_total
+    graded = [r for r, race in horse_results if race.grade in ("G1", "G2", "G3")]
+    if graded:
+        graded_top3 = sum(1 for r in graded if r.finish_position <= 3)
+        graded_rate = graded_top3 / len(graded)
     else:
         graded_rate = 0.0
 
-    score = win_rate * 50.0 + graded_rate * 50.0
-    return _clamp(score)
+    return _clamp(win_rate * 50.0 + graded_rate * 50.0)

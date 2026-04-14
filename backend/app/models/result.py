@@ -8,8 +8,8 @@ class Result(Base):
     __tablename__ = "results"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    race_id = Column(String, ForeignKey("races.id"), nullable=False)
-    horse_id = Column(String, ForeignKey("horses.id"), nullable=False)
+    race_id = Column(String, ForeignKey("races.id"), nullable=False, index=True)
+    horse_id = Column(String, ForeignKey("horses.id"), nullable=False, index=True)
     finish_position = Column(Integer, nullable=True)  # 着順
     time = Column(String, nullable=True)  # 走破タイム
     margin = Column(String, nullable=True)  # 着差

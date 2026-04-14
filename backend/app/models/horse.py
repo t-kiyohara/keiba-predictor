@@ -11,9 +11,9 @@ class Horse(Base):
     name = Column(String, nullable=False)
     sex = Column(String, nullable=True)
     birthday = Column(Date, nullable=True)
-    sire = Column(String, nullable=True)  # 父
+    sire = Column(String, nullable=True, index=True)  # 父
     dam = Column(String, nullable=True)  # 母
-    dam_sire = Column(String, nullable=True)  # 母父
+    dam_sire = Column(String, nullable=True, index=True)  # 母父
 
     entries = relationship("Entry", back_populates="horse")
     results = relationship("Result", back_populates="horse")

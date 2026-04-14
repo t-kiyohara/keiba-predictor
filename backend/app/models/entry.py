@@ -8,10 +8,10 @@ class Entry(Base):
     __tablename__ = "entries"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    race_id = Column(String, ForeignKey("races.id"), nullable=False)
-    horse_id = Column(String, ForeignKey("horses.id"), nullable=False)
-    jockey_id = Column(String, ForeignKey("jockeys.id"), nullable=True)
-    trainer_id = Column(String, ForeignKey("trainers.id"), nullable=True)
+    race_id = Column(String, ForeignKey("races.id"), nullable=False, index=True)
+    horse_id = Column(String, ForeignKey("horses.id"), nullable=False, index=True)
+    jockey_id = Column(String, ForeignKey("jockeys.id"), nullable=True, index=True)
+    trainer_id = Column(String, ForeignKey("trainers.id"), nullable=True, index=True)
     post_position = Column(Integer, nullable=True)  # 枠番
     horse_number = Column(Integer, nullable=True)  # 馬番
     weight = Column(Float, nullable=True)  # 斤量

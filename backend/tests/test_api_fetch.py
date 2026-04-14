@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from app.routers.fetch import FetchProgress
+
 
 # ---------------------------------------------------------------------------
 # GET /api/fetch/progress
@@ -32,14 +34,14 @@ class TestGetProgress:
         """fetch router の _progress をリセットして idle 状態を確認する"""
         import app.routers.fetch as fetch_router
         # モジュール変数を直接リセット
-        fetch_router._progress = {
-            "status": "idle",
-            "step": "",
-            "current": 0,
-            "total": 0,
-            "message": "",
-            "estimated_remaining": None,
-        }
+        fetch_router._progress = FetchProgress(
+            status="idle",
+            step="",
+            current=0,
+            total=0,
+            message="",
+            estimated_remaining=None,
+        )
         response = client.get("/api/fetch/progress")
         assert response.status_code == 200
         data = response.json()
@@ -58,14 +60,9 @@ class TestStartFetch:
         """POST /api/fetch → status: "started" が返ること"""
         import app.routers.fetch as fetch_router
         # idle 状態にリセット
-        fetch_router._progress = {
-            "status": "idle",
-            "step": "",
-            "current": 0,
-            "total": 0,
-            "message": "",
-            "estimated_remaining": None,
-        }
+        fetch_router._progress = FetchProgress(
+            status="idle", step="", current=0, total=0, message=""
+        )
         response = client.post("/api/fetch")
         assert response.status_code == 200
         data = response.json()
@@ -76,14 +73,13 @@ class TestStartFetch:
         """二重実行防止: running 中に POST → already_running が返ること"""
         import app.routers.fetch as fetch_router
         # running 状態に設定
-        fetch_router._progress = {
-            "status": "running",
-            "step": "テスト中",
-            "current": 1,
-            "total": 7,
-            "message": "実行中...",
-            "estimated_remaining": None,
-        }
+        fetch_router._progress = FetchProgress(
+            status="running",
+            step="テスト中",
+            current=1,
+            total=7,
+            message="実行中...",
+        )
         response = client.post("/api/fetch")
         assert response.status_code == 200
         data = response.json()
@@ -94,14 +90,9 @@ class TestStartFetch:
         """POST /api/fetch のレスポンスに status と message が含まれること"""
         import app.routers.fetch as fetch_router
         # idle 状態にリセット
-        fetch_router._progress = {
-            "status": "idle",
-            "step": "",
-            "current": 0,
-            "total": 0,
-            "message": "",
-            "estimated_remaining": None,
-        }
+        fetch_router._progress = FetchProgress(
+            status="idle", step="", current=0, total=0, message=""
+        )
         response = client.post("/api/fetch")
         assert response.status_code == 200
         data = response.json()
