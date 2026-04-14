@@ -31,6 +31,12 @@ class ScoringEngine:
         N+1が発生しない。このメソッドは単馬のプリロードを行うため、
         テストや単体スコア確認に使用する。
 
+        Note:
+            血統スコアで predict_race() と微差が生じる場合がある。
+            predict_race() は同レース全馬を除外するが、このメソッドは
+            対象馬のみを除外するため、同レースに兄弟馬がいる場合に
+            わずかに高い血統スコアを返す可能性がある。
+
         Returns:
             {
                 "total_score": 75.5,
@@ -229,7 +235,7 @@ class ScoringEngine:
             .join(Race, Result.race_id == Race.id)
             .filter(Result.horse_id.in_(horse_ids))
             .filter(Result.finish_position.isnot(None))
-            .order_by(Race.date.desc())
+            .order_by(Race.date.desc(), Race.id.desc())  # Race.id で同日内の順序を安定化
             .all()
         )
         result_map: dict[str, list[tuple]] = defaultdict(list)
