@@ -8,6 +8,7 @@ export function useApi() {
   const loadingCount = useRef(0);
 
   const fetchApi = useCallback(async <T>(path: string, options?: RequestInit): Promise<T | null> => {
+    const controller = new AbortController();
     loadingCount.current += 1;
     setLoading(true);
     setError(null);
@@ -15,6 +16,7 @@ export function useApi() {
       const response = await fetch(`${API_BASE}${path}`, {
         headers: { 'Content-Type': 'application/json' },
         ...options,
+        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`API Error: ${response.status} ${response.statusText}`);
@@ -22,6 +24,9 @@ export function useApi() {
       const data = await response.json();
       return data as T;
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return null;
+      }
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
       return null;

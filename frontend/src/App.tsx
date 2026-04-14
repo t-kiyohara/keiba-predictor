@@ -10,25 +10,21 @@ function Header() {
   const navigate = useNavigate();
 
   return (
-    <header className="navbar bg-base-100 shadow-lg sticky top-0 z-50">
-      <div className="flex-1">
+    <header className="bg-surface shadow-sm border-b border-border sticky top-0 z-50">
+      <div className="container mx-auto px-4 flex items-center justify-between">
         <button
-          className="btn btn-ghost text-xl gap-2"
+          className="btn-ghost text-xl gap-2"
           onClick={() => navigate('/')}
         >
           <span>🏇</span>
-          <span className="hidden sm:inline">競馬予想システム</span>
-          <span className="sm:hidden">競馬予想</span>
+          <span className="hidden desktop:inline">競馬予想システム</span>
+          <span className="desktop:hidden">競馬予想</span>
         </button>
-      </div>
-      <div className="flex-none">
-        <ul className="menu menu-horizontal px-1 gap-1">
-          <li>
-            <Link to="/" className="btn btn-ghost btn-sm">
-              ホーム
-            </Link>
-          </li>
-        </ul>
+        <nav className="flex items-center gap-1">
+          <Link to="/" className="btn-ghost btn-sm text-sm">
+            ホーム
+          </Link>
+        </nav>
       </div>
     </header>
   );
@@ -36,12 +32,15 @@ function Header() {
 
 function Footer() {
   return (
-    <footer className="footer footer-center bg-base-100 border-t border-base-200 p-6 mt-12">
-      <div className="text-center space-y-1">
-        <p className="text-sm opacity-60">
-          🏇 競馬予想システム <span className="badge badge-sm badge-outline ml-1">v{APP_VERSION}</span>
+    <footer className="bg-surface border-t border-border p-6 mt-12 text-center">
+      <div className="space-y-1">
+        <p className="text-sm text-text-grey">
+          🏇 競馬予想システム{' '}
+          <span className="badge-smarthr border border-border text-text-grey ml-1">
+            v{APP_VERSION}
+          </span>
         </p>
-        <p className="text-xs opacity-40">
+        <p className="text-xs text-text-disabled">
           © {new Date().getFullYear()} keiba-predictor. All rights reserved.
         </p>
       </div>
@@ -51,7 +50,7 @@ function Footer() {
 
 function AppLayout() {
   return (
-    <div className="min-h-screen bg-base-200 flex flex-col">
+    <div className="min-h-screen bg-stone-01 flex flex-col">
       <Header />
 
       {/* メインコンテンツ */}
