@@ -6,9 +6,17 @@ export function useApi() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadingCount = useRef(0);
+  const controllersRef = useRef<AbortController[]>([]);
+
+  /** 実行中の全リクエストをキャンセルする（コンポーネントのクリーンアップ用） */
+  const abort = useCallback(() => {
+    controllersRef.current.forEach((c) => c.abort());
+    controllersRef.current = [];
+  }, []);
 
   const fetchApi = useCallback(async <T>(path: string, options?: RequestInit): Promise<T | null> => {
     const controller = new AbortController();
+    controllersRef.current.push(controller);
     loadingCount.current += 1;
     setLoading(true);
     setError(null);
@@ -32,11 +40,12 @@ export function useApi() {
       return null;
     } finally {
       loadingCount.current -= 1;
+      controllersRef.current = controllersRef.current.filter((c) => c !== controller);
       if (loadingCount.current === 0) {
         setLoading(false);
       }
     }
   }, []);
 
-  return { fetchApi, loading, error };
+  return { fetchApi, loading, error, abort };
 }

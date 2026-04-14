@@ -32,7 +32,7 @@ export default function RaceDetail() {
   const [race, setRace] = useState<Race | null>(null);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [selectedPrediction, setSelectedPrediction] = useState<Prediction | null>(null);
-  const { fetchApi, loading, error } = useApi();
+  const { fetchApi, loading, error, abort } = useApi();
 
   useEffect(() => {
     if (!id) return;
@@ -51,7 +51,8 @@ export default function RaceDetail() {
     };
 
     loadData();
-  }, [id, fetchApi]);
+    return () => abort();
+  }, [id, fetchApi, abort]);
 
   const handleHorseSelect = (horseId: string) => {
     const pred = predictions.find((p) => p.horse_id === horseId) ?? null;
@@ -66,7 +67,7 @@ export default function RaceDetail() {
         <div className="card-smarthr">
           <div className="p-4 space-y-4">
             <div className="skeleton h-8 w-64"></div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 desktop:grid-cols-4 gap-4">
               {[...Array(4)].map((_, i) => (
                 <div key={i} className="space-y-2">
                   <div className="skeleton h-3 w-16"></div>
@@ -76,7 +77,7 @@ export default function RaceDetail() {
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 tablet:grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
             <div key={i} className="card-smarthr">
               <div className="p-4 space-y-3">
@@ -93,7 +94,7 @@ export default function RaceDetail() {
 
   if (error) {
     return (
-      <div className="alert-error">
+      <div className="alert-error" role="alert">
         <span>{error}</span>
       </div>
     );
@@ -101,7 +102,7 @@ export default function RaceDetail() {
 
   if (!race) {
     return (
-      <div className="alert-warning">
+      <div className="alert-warning" role="alert">
         <span>レース情報が見つかりません。</span>
       </div>
     );
@@ -136,7 +137,7 @@ export default function RaceDetail() {
               </span>
             )}
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+          <div className="grid grid-cols-2 desktop:grid-cols-4 gap-4 mt-4">
             <div>
               <p className="text-sm text-text-grey">日付</p>
               <p className="font-semibold text-text-black">{race.date}</p>
@@ -161,7 +162,7 @@ export default function RaceDetail() {
       {top3.length > 0 && (
         <div>
           <h2 className="text-xl font-bold mb-3 text-text-black">予想上位馬</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 tablet:grid-cols-3 gap-4">
             {top3.map((pred) => (
               <div
                 key={pred.horse_id}
@@ -198,8 +199,8 @@ export default function RaceDetail() {
 
       {/* スコアテーブルとチャート */}
       {predictions.length > 0 && (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="xl:col-span-2">
+        <div className="grid grid-cols-1 desktop:grid-cols-3 gap-6">
+          <div className="desktop:col-span-2">
             <h2 className="text-xl font-bold mb-3 text-text-black">全馬ランキング</h2>
             <div className="card-smarthr p-2">
               <ScoreTable
@@ -230,7 +231,7 @@ export default function RaceDetail() {
       )}
 
       {predictions.length === 0 && (
-        <div className="alert-info">
+        <div className="alert-info" role="status">
           <span>このレースの予想データはまだありません。</span>
         </div>
       )}

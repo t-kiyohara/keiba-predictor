@@ -23,7 +23,6 @@ export default function ScoreTable({ predictions, onHorseClick, selectedHorseId 
         <thead>
           <tr className="bg-stone-02">
             <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey w-12">順位</th>
-            <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey w-10">馬番*</th>
             <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">馬名</th>
             <th className="px-3 py-2 text-right text-xs font-semibold text-text-grey">総合</th>
             {factorKeys.map((key) => (
@@ -52,7 +51,6 @@ export default function ScoreTable({ predictions, onHorseClick, selectedHorseId 
                     {pred.rank}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-xs text-text-disabled font-mono">{pred.rank}</td>
                 <td className={`px-3 py-2 font-semibold ${isSelected ? 'text-primary' : 'text-text-black'}`}>
                   {pred.horse_name}
                 </td>

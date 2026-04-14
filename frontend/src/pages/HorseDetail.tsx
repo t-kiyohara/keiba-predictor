@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Horse, RaceResult } from '../types';
 import { useApi } from '../hooks/useApi';
-import { TRACK_CONDITION_CLASS } from '../constants/badge';
+import { TRACK_CONDITION_CLASS, RANK_BADGE } from '../constants/badge';
 
 function calcAge(birthday: string | null): string {
   if (!birthday) return '-';
@@ -92,7 +92,7 @@ export default function HorseDetail() {
   const navigate = useNavigate();
   const [horse, setHorse] = useState<Horse | null>(null);
   const [results, setResults] = useState<RaceResult[]>([]);
-  const { fetchApi, loading, error } = useApi();
+  const { fetchApi, loading, error, abort } = useApi();
 
   useEffect(() => {
     if (!id) return;
@@ -107,7 +107,8 @@ export default function HorseDetail() {
     };
 
     loadData();
-  }, [id, fetchApi]);
+    return () => abort();
+  }, [id, fetchApi, abort]);
 
   if (loading) {
     return (
@@ -120,7 +121,7 @@ export default function HorseDetail() {
         <div className="card-smarthr">
           <div className="p-4 space-y-4">
             <div className="skeleton h-8 w-48"></div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 tablet:grid-cols-3 gap-4">
               {[...Array(6)].map((_, i) => (
                 <div key={i} className="space-y-1">
                   <div className="skeleton h-3 w-12"></div>
@@ -136,7 +137,7 @@ export default function HorseDetail() {
 
   if (error) {
     return (
-      <div className="alert-error">
+      <div className="alert-error" role="alert">
         <span>{error}</span>
       </div>
     );
@@ -144,7 +145,7 @@ export default function HorseDetail() {
 
   if (!horse) {
     return (
-      <div className="alert-warning">
+      <div className="alert-warning" role="alert">
         <span>馬の情報が見つかりません。</span>
       </div>
     );
@@ -177,7 +178,7 @@ export default function HorseDetail() {
               <span className="badge-smarthr border border-border text-text-grey">{horse.sex}</span>
             )}
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4">
+          <div className="grid grid-cols-2 tablet:grid-cols-3 gap-4 mt-4">
             <div>
               <p className="text-sm text-text-grey">性別</p>
               <p className="font-semibold text-text-black">{horse.sex ?? '-'}</p>
@@ -239,7 +240,7 @@ export default function HorseDetail() {
                     </td>
                     <td className="px-3 py-2">
                       {result.finish_position !== null ? (
-                        <span className={`badge-smarthr ${result.finish_position === 1 ? 'bg-yellow-400/30 text-yellow-700' : result.finish_position <= 3 ? 'bg-primary/20 text-primary' : 'bg-stone-02 text-stone-04'}`}>
+                        <span className={RANK_BADGE[result.finish_position] ?? 'badge-smarthr bg-stone-02 text-stone-04'}>
                           {result.finish_position}着
                         </span>
                       ) : '-'}
@@ -259,7 +260,7 @@ export default function HorseDetail() {
             </table>
           </div>
         ) : (
-          <div className="alert-info">
+          <div className="alert-info" role="status">
             <span>過去の成績データがありません。</span>
           </div>
         )}
