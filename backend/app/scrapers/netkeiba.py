@@ -33,7 +33,7 @@ def _normalize_grade(text: str) -> str:
 def venue_from_race_id(race_id: str) -> str:
     """race_idの5〜6桁目（インデックス4-5）から会場名を返す。
 
-    例: "202606030501" → インデックス4-5 = "03" → 福島
+    例: "202606030511" → インデックス4-5 = "06" → 中山
     race_idフォーマット: YYYY + CC + RR + DD + NN
       YYYY=年, CC=会場コード(2桁), RR=回, DD=日, NN=レース番号(2桁)
     """
@@ -176,7 +176,7 @@ class NetkeibaScraper(BaseScraper):
             "date": race_date_str,
         }
 
-    def _parse_entry_table(self, soup: BeautifulSoup) -> list[dict]:
+    def _parse_entry_table(self, soup: BeautifulSoup) -> list[dict] | None:
         """soupから出走表の各エントリを抽出する。
 
         Args:

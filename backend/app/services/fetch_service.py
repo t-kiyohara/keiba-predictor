@@ -38,7 +38,7 @@ class FetchService:
 
         # ステップ1: 対象日を決定する
         self.progress("日程取得", 1, self.TOTAL_STEPS, "対象レース日を決定中...")
-        target_dates = await self._step_determine_dates()
+        target_dates = self._step_determine_dates()
 
         # ステップ2: JRAグレードレース一覧とnetkeiba race_idを取得
         self.progress(
@@ -101,7 +101,7 @@ class FetchService:
     # プライベートステップメソッド
     # ------------------------------------------------------------------
 
-    async def _step_determine_dates(self) -> list[date]:
+    def _step_determine_dates(self) -> list[date]:
         """ステップ1: 対象日を決定する"""
         today = date.today()
         return get_target_race_dates(today)
@@ -246,16 +246,14 @@ class FetchService:
                 self.db.flush()
 
     def _step_score(
-        self, races: list[Race]
+        self, _races: list[Race]
     ) -> None:
-        """ステップ7: スコアリングを実行"""
-        engine = ScoringEngine(self.db)
-        for race in races:
-            try:
-                engine.predict_race(race.id)
-            except Exception as e:
-                logger.warning("Scoring failed for race %s: %s", race.id, e)
-        self.db.commit()
+        """ステップ7: スコアリングを実行
+
+        DBに存在する全レースを対象にスコアリングする。
+        過去フェッチで蓄積されたデータも含めて再スコアリングされる。
+        """
+        self._score_existing_races()
 
     # ------------------------------------------------------------------
     # 内部ユーティリティ
