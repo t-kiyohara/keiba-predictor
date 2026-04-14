@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 
 from app.models import Race, Horse, Result, Entry, Jockey, Trainer
-from app.scoring.weights import FACTOR_WEIGHTS, NEUTRAL_SCORE, DISTANCE_TOLERANCE_M
+from app.scoring.weights import NEUTRAL_SCORE, DISTANCE_TOLERANCE_M
 
 
 def _clamp(score: float) -> float:
@@ -44,7 +44,7 @@ def _win_rate_score(
     rentai_rate = sum(1 for r in results if r.finish_position <= 2) / total
     fukusho_rate = sum(1 for r in results if r.finish_position <= 3) / total
     raw = win_rate * w_win + rentai_rate * w_rentai + fukusho_rate * w_fukusho
-    return min(raw + NEUTRAL_SCORE, 100.0)
+    return _clamp(raw)
 
 
 def score_recent_form(db: Session, horse_id: str, limit: int = 5) -> float:
@@ -236,7 +236,7 @@ def score_track_condition(db: Session, horse_id: str, track_condition: str) -> f
     if not results:
         return NEUTRAL_SCORE
 
-    return _clamp(_win_rate_score(results))
+    return _win_rate_score(results)
 
 
 def _score_person(
@@ -365,7 +365,8 @@ def score_bloodline(db: Session, horse_id: str, venue: str, distance: int, cours
         top2 = sum(1 for r in results if r.finish_position <= 2)
         win_rate = wins / total
         rentai_rate = top2 / total
-        return win_rate * 60.0 + rentai_rate * 40.0
+        # 勝率60% + 連対率40% で加重スコア算出（fukushoは使用しない）
+        return _clamp(win_rate * 60.0 + rentai_rate * 40.0)
 
     sire_score = calc_bloodline_score(horse.sire, "sire")
     dam_sire_score = calc_bloodline_score(horse.dam_sire, "dam_sire")
