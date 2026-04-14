@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from bs4 import BeautifulSoup
+
 from app.scrapers.base import BaseScraper
 from app.scrapers.constants import GRADE_NORMALIZE, GRADE_PATTERN
 
@@ -20,7 +22,6 @@ _VENUE_CODE: dict[str, str] = {
     "10": "小倉",
 }
 
-
 def _normalize_grade(text: str) -> str:
     """レース名テキストからグレードを抽出して正規化する。"""
     m = GRADE_PATTERN.search(text)
@@ -29,7 +30,7 @@ def _normalize_grade(text: str) -> str:
     return ""
 
 
-def _venue_from_race_id(race_id: str) -> str:
+def venue_from_race_id(race_id: str) -> str:
     """race_idの5〜6桁目（インデックス4-5）から会場名を返す。
 
     例: "202606030501" → インデックス4-5 = "03" → 福島
@@ -88,25 +89,17 @@ class NetkeibaScraper(BaseScraper):
 
         return results
 
-    async def fetch_race_entries(self, race_id: str) -> dict:
-        """レース出馬表ページから出走馬情報を取得する。
+    def _parse_race_info(self, soup: BeautifulSoup, race_id: str) -> dict:
+        """soupからレース情報（距離, コース種別, グレード, 会場, 日付等）を抽出する。
 
         Args:
-            race_id: netkeibaのレースID（例: "202405050811"）
+            soup: 出馬表ページのBeautifulSoupオブジェクト
+            race_id: netkeibaのレースID
 
         Returns:
-            レース情報と出走馬リストを含む辞書。エラー時は空dict `{}` を返す。
+            レース情報の辞書（name, grade, distance, course_type, venue, date）
         """
-        url = f"{self.BASE_URL}/race/shutuba.html?race_id={race_id}"
-        try:
-            html = await self.fetch(url, encoding="euc-jp")
-        except Exception as e:
-            self.logger.warning("出馬表取得失敗 (race_id=%s): %s", race_id, e)
-            return {}
-
-        soup = self.parse_html(html)
-
-        # ---- レース情報の抽出 ----
+        # 距離とコース種別
         distance = 0
         course_type = ""
         race_data_div = soup.find("div", class_="RaceData01")
@@ -139,14 +132,12 @@ class NetkeibaScraper(BaseScraper):
         grade = _normalize_grade(race_name)
 
         # 会場判定（race_idから）
-        venue = _venue_from_race_id(race_id)
+        venue = venue_from_race_id(race_id)
 
-        # レース日付（race_idの先頭4桁が年、次の4桁が不要、0-3が年）
+        # レース日付の取得（ページのメタ情報から）
         race_date_str = ""
         if len(race_id) >= 8:
             year = race_id[:4]
-            # race_idから日付は直接取れないため、ページのメタ情報から取得を試みる
-            # fallback として空文字
             date_el = soup.select_one(".RaceData02 span")
             if date_el:
                 date_text = date_el.get_text(strip=True)
@@ -176,14 +167,29 @@ class NetkeibaScraper(BaseScraper):
                     race_id,
                 )
 
-        # ---- 出馬表のパース ----
-        entries: list[dict] = []
+        return {
+            "name": race_name,
+            "grade": grade,
+            "distance": distance,
+            "course_type": course_type,
+            "venue": venue,
+            "date": race_date_str,
+        }
+
+    def _parse_entry_table(self, soup: BeautifulSoup) -> list[dict]:
+        """soupから出走表の各エントリを抽出する。
+
+        Args:
+            soup: 出馬表ページのBeautifulSoupオブジェクト
+
+        Returns:
+            出走馬情報のリスト。テーブルが見つからない場合はNoneを返す。
+        """
         table = soup.select_one("table.Shutuba_Table")
         if not table:
-            # テーブルが見つからない場合は空dict
-            self.logger.warning("出馬表テーブルが見つかりません (race_id=%s)", race_id)
-            return {}
+            return None
 
+        entries: list[dict] = []
         for tr in table.find_all("tr"):
             # 取消馬スキップ: trにclass "Cancel" があるか、テキストに"取消"を含む行
             tr_classes = tr.get("class", [])
@@ -272,38 +278,57 @@ class NetkeibaScraper(BaseScraper):
                 }
             )
 
-        return {
-            "race_info": {
-                "race_id": race_id,
-                "name": race_name,
-                "date": race_date_str,
-                "venue": venue,
-                "grade": grade,
-                "distance": distance,
-                "course_type": course_type,
-            },
-            "entries": entries,
-        }
+        return entries
 
-    async def fetch_horse_profile(self, horse_id: str) -> dict:
-        """馬の血統・プロフィールを取得する。
+    async def fetch_race_entries(self, race_id: str) -> dict:
+        """レース出馬表ページから出走馬情報を取得する。
 
         Args:
-            horse_id: netkeibaの馬ID（例: "2019105943"）
+            race_id: netkeibaのレースID（例: "202405050811"）
 
         Returns:
-            馬のプロフィール情報。エラー時は空dict `{}` を返す。
+            レース情報と出走馬リストを含む辞書。エラー時は空dict `{}` を返す。
         """
-        # Step 1: メインプロフィールページ（静的HTML）
-        profile_url = f"{self.DB_URL}/horse/{horse_id}/"
+        url = f"{self.BASE_URL}/race/shutuba.html?race_id={race_id}"
         try:
-            html = await self.fetch(profile_url, encoding="euc-jp")
+            html = await self.fetch(url, encoding="euc-jp")
         except Exception as e:
-            self.logger.warning("馬プロフィール取得失敗 (horse_id=%s): %s", horse_id, e)
+            self.logger.warning("出馬表取得失敗 (race_id=%s): %s", race_id, e)
             return {}
 
         soup = self.parse_html(html)
 
+        # レース情報の抽出
+        race_info = self._parse_race_info(soup, race_id)
+
+        # 出走表のパース
+        entries = self._parse_entry_table(soup)
+        if entries is None:
+            self.logger.warning("出馬表テーブルが見つかりません (race_id=%s)", race_id)
+            return {}
+
+        return {
+            "race_info": {
+                "race_id": race_id,
+                "name": race_info["name"],
+                "date": race_info["date"],
+                "venue": race_info["venue"],
+                "grade": race_info["grade"],
+                "distance": race_info["distance"],
+                "course_type": race_info["course_type"],
+            },
+            "entries": entries,
+        }
+
+    def _parse_profile_page(self, soup: BeautifulSoup) -> dict:
+        """プロフィールページからプロフィール情報を抽出する。
+
+        Args:
+            soup: 馬プロフィールページのBeautifulSoupオブジェクト
+
+        Returns:
+            馬名・誕生日・性別を含む辞書
+        """
         # 馬名: <title> から取得
         horse_name = ""
         title_el = soup.find("title")
@@ -328,11 +353,23 @@ class NetkeibaScraper(BaseScraper):
         if sex_m:
             sex = sex_m.group(0)
 
-        # Step 2: 血統AJAXエンドポイント
+        return {
+            "name": horse_name,
+            "birthday": birthday,
+            "sex": sex,
+        }
+
+    async def _fetch_pedigree(self, horse_id: str) -> dict:
+        """血統AJAXエンドポイントをフェッチして父/母/母父を返す。
+
+        Args:
+            horse_id: netkeibaの馬ID
+
+        Returns:
+            {"sire": str, "dam": str, "dam_sire": str} の辞書
+        """
         pedigree_url = f"{self.DB_URL}/horse/ajax_horse_pedigree.html?id={horse_id}"
-        sire = ""
-        dam = ""
-        dam_sire = ""
+        pedigree_html = ""
         try:
             pedigree_html = await self.fetch(pedigree_url, encoding="euc-jp")
         except Exception:
@@ -341,12 +378,14 @@ class NetkeibaScraper(BaseScraper):
                 pedigree_html = await self.fetch(pedigree_url)
             except Exception as e:
                 self.logger.warning("血統取得失敗 (horse_id=%s): %s", horse_id, e)
-                pedigree_html = ""
+
+        sire = ""
+        dam = ""
+        dam_sire = ""
 
         if pedigree_html:
             ped_soup = self.parse_html(pedigree_html)
             # 血統テーブルから父・母・母父を抽出
-            # blood_tableまたは類似クラスを探す
             blood_table = ped_soup.find("table", class_="blood_table")
             if not blood_table:
                 blood_table = ped_soup.find("table")
@@ -354,38 +393,180 @@ class NetkeibaScraper(BaseScraper):
                 rows = blood_table.find_all("tr")
                 if len(rows) >= 1:
                     # 1行目に父の情報（最初のaタグ）
-                    first_row = rows[0]
-                    links = first_row.find_all("a")
+                    links = rows[0].find_all("a")
                     if links:
                         sire = links[0].get_text(strip=True)
                 if len(rows) >= 2:
                     # 2行目に母の情報
-                    second_row = rows[1]
-                    links = second_row.find_all("a")
+                    links = rows[1].find_all("a")
                     if links:
                         dam = links[0].get_text(strip=True)
                 if len(rows) >= 3:
                     # 3行目に母父の情報（またはtd内の特定位置）
-                    third_row = rows[2]
-                    links = third_row.find_all("a")
+                    links = rows[2].find_all("a")
                     if links:
                         dam_sire = links[0].get_text(strip=True)
 
-        if not sire:
+        return {"sire": sire, "dam": dam, "dam_sire": dam_sire}
+
+    async def fetch_horse_profile(self, horse_id: str) -> dict:
+        """馬の血統・プロフィールを取得する。
+
+        Args:
+            horse_id: netkeibaの馬ID（例: "2019105943"）
+
+        Returns:
+            馬のプロフィール情報。エラー時は空dict `{}` を返す。
+        """
+        # Step 1: メインプロフィールページ（静的HTML）
+        profile_url = f"{self.DB_URL}/horse/{horse_id}/"
+        try:
+            html = await self.fetch(profile_url, encoding="euc-jp")
+        except Exception as e:
+            self.logger.warning("馬プロフィール取得失敗 (horse_id=%s): %s", horse_id, e)
+            return {}
+
+        soup = self.parse_html(html)
+        profile = self._parse_profile_page(soup)
+
+        # Step 2: 血統AJAXエンドポイント
+        pedigree = await self._fetch_pedigree(horse_id)
+
+        if not pedigree["sire"]:
             self.logger.warning("父馬が取得できませんでした (horse_id=%s)", horse_id)
-        if not dam:
+        if not pedigree["dam"]:
             self.logger.warning("母馬が取得できませんでした (horse_id=%s)", horse_id)
-        if not dam_sire:
+        if not pedigree["dam_sire"]:
             self.logger.warning("母父が取得できませんでした (horse_id=%s)", horse_id)
 
         return {
             "id": horse_id,
-            "name": horse_name,
-            "sex": sex,
-            "birthday": birthday,
-            "sire": sire,
-            "dam": dam,
-            "dam_sire": dam_sire,
+            "name": profile["name"],
+            "sex": profile["sex"],
+            "birthday": profile["birthday"],
+            "sire": pedigree["sire"],
+            "dam": pedigree["dam"],
+            "dam_sire": pedigree["dam_sire"],
+        }
+
+    def _detect_column_indices(self, header_row) -> dict[str, int]:
+        """ヘッダー行のセルテキストからカラムインデックスを検出する。
+
+        Args:
+            header_row: BeautifulSoupのtrタグ（ヘッダー行）
+
+        Returns:
+            カラム名 → インデックスの辞書（例: {"着順": 11, "レース名": 4, ...}）
+        """
+        col_index: dict[str, int] = {}
+        for i, th in enumerate(header_row.find_all(["th", "td"])):
+            col_name = th.get_text(strip=True)
+            col_index[col_name] = i
+        return col_index
+
+    def _parse_result_row(self, row, col_indices: dict[str, int]) -> dict | None:
+        """成績テーブルの1行をパースする。スキップ行はNoneを返す。
+
+        Args:
+            row: BeautifulSoupのtrタグ（データ行）
+            col_indices: _detect_column_indices()で取得したカラム名→インデックスの辞書
+
+        Returns:
+            成績情報の辞書。着順が数値でない行（中止/除外/取消等）はNoneを返す。
+        """
+        cells = row.find_all(["td", "th"])
+        if not cells:
+            return None
+
+        def _cell(key: str, fallback: int = -1) -> str:
+            idx = col_indices.get(key, fallback)
+            if idx < 0 or idx >= len(cells):
+                return ""
+            return cells[idx].get_text(strip=True)
+
+        # カラム位置が特定できない場合は位置でフォールバック
+        # netkeiba成績テーブルの列順（33列）:
+        # 0:日付, 1:開催, 2:天気, 3:R, 4:レース名, 5:映像, 6:頭数,
+        # 7:枠番, 8:馬番, 9:オッズ, 10:人気, 11:着順, 12:騎手,
+        # 13:斤量, 14:距離, 15:水分量, 16:馬場, 17:馬場指数,
+        # 18:タイム, 19:着差, 20-24:各種指数, 25:通過, 26:ペース,
+        # 27:上り, 28:馬体重, 29-32:その他
+        date_str = _cell("日付", 0)
+        race_name = _cell("レース名", 4)
+        finish_pos_str = _cell("着順", 11)
+        jockey_name = _cell("騎手", 12)
+        dist_str = _cell("距離", 14)
+        track_cond = _cell("馬場", 16)
+        time_str = _cell("タイム", 18)
+        last3f_str = _cell("上り", 27)
+
+        # 着順が数値でない行はスキップ（中止, 除外, 取消 等）
+        try:
+            finish_position = int(finish_pos_str)
+        except ValueError:
+            return None
+
+        # race_idをリンクから取得
+        race_id = ""
+        race_name_idx = col_indices.get("レース名", 4)
+        if 0 <= race_name_idx < len(cells):
+            race_link = cells[race_name_idx].find("a", href=True)
+            if race_link:
+                href = race_link.get("href", "")
+                rid_m = re.search(r"(?:race_id=|/race/)(\d+)", href)
+                if rid_m:
+                    race_id = rid_m.group(1)
+
+        # 距離とコース種別の抽出（例: "芝2000"、"ダ1600"）
+        distance = 0
+        course_type = ""
+        if dist_str:
+            if dist_str.startswith("芝"):
+                course_type = "芝"
+                try:
+                    distance = int(dist_str[1:])
+                except ValueError:
+                    pass
+            elif dist_str.startswith("ダ"):
+                course_type = "ダート"
+                try:
+                    distance = int(dist_str[1:])
+                except ValueError:
+                    pass
+            else:
+                dm = re.search(r"(\d+)", dist_str)
+                if dm:
+                    distance = int(dm.group(1))
+
+        # 開催・会場
+        venue_str = _cell("開催", 1)
+        venue = ""
+        if venue_str:
+            # 「阪神1回1日」のような形式から競馬場名を取得
+            for v in _VENUE_CODE.values():
+                if v in venue_str:
+                    venue = v
+                    break
+
+        # 上がり3F
+        last_3f = 0.0
+        try:
+            last_3f = float(last3f_str)
+        except ValueError:
+            pass
+
+        return {
+            "race_id": race_id,
+            "race_name": race_name,
+            "date": date_str,
+            "venue": venue,
+            "distance": distance,
+            "course_type": course_type,
+            "track_condition": track_cond,
+            "finish_position": finish_position,
+            "time": time_str,
+            "last_3f": last_3f,
+            "jockey_name": jockey_name,
         }
 
     async def fetch_horse_results(self, horse_id: str, limit: int = 10) -> list[dict]:
@@ -411,114 +592,18 @@ class NetkeibaScraper(BaseScraper):
             return []
 
         # ヘッダー行でカラム位置を特定
-        col_index: dict[str, int] = {}
         header_row = table.find("tr")
+        col_indices: dict[str, int] = {}
         if header_row:
-            for i, th in enumerate(header_row.find_all(["th", "td"])):
-                col_name = th.get_text(strip=True)
-                col_index[col_name] = i
+            col_indices = self._detect_column_indices(header_row)
 
         results: list[dict] = []
         rows = table.find_all("tr")
         # ヘッダー行をスキップしてデータ行を処理
         for tr in rows[1:]:
-            cells = tr.find_all(["td", "th"])
-            if not cells:
-                continue
-
-            def _cell(key: str, fallback: int = -1, _cells: list = cells) -> str:
-                idx = col_index.get(key, fallback)
-                if idx < 0 or idx >= len(_cells):
-                    return ""
-                return _cells[idx].get_text(strip=True)
-
-            # カラム位置が特定できない場合は位置でフォールバック
-            # netkeiba成績テーブルの列順（33列）:
-            # 0:日付, 1:開催, 2:天気, 3:R, 4:レース名, 5:映像, 6:頭数,
-            # 7:枠番, 8:馬番, 9:オッズ, 10:人気, 11:着順, 12:騎手,
-            # 13:斤量, 14:距離, 15:水分量, 16:馬場, 17:馬場指数,
-            # 18:タイム, 19:着差, 20-24:各種指数, 25:通過, 26:ペース,
-            # 27:上り, 28:馬体重, 29-32:その他
-            date_str = _cell("日付", 0)
-            race_name = _cell("レース名", 4)
-            finish_pos_str = _cell("着順", 11)
-            jockey_name = _cell("騎手", 12)
-            dist_str = _cell("距離", 14)
-            track_cond = _cell("馬場", 16)
-            time_str = _cell("タイム", 18)
-            last3f_str = _cell("上り", 27)
-
-            # 着順が数値でない行はスキップ（中止, 除外, 取消 等）
-            try:
-                finish_position = int(finish_pos_str)
-            except ValueError:
-                continue
-
-            # race_idをリンクから取得
-            race_id = ""
-            race_link = None
-            race_name_idx = col_index.get("レース名", 4)
-            if 0 <= race_name_idx < len(cells):
-                race_link = cells[race_name_idx].find("a", href=True)
-            if race_link:
-                href = race_link.get("href", "")
-                rid_m = re.search(r"(?:race_id=|/race/)(\d+)", href)
-                if rid_m:
-                    race_id = rid_m.group(1)
-
-            # 距離とコース種別の抽出（例: "芝2000"、"ダ1600"）
-            distance = 0
-            course_type = ""
-            if dist_str:
-                if dist_str.startswith("芝"):
-                    course_type = "芝"
-                    try:
-                        distance = int(dist_str[1:])
-                    except ValueError:
-                        pass
-                elif dist_str.startswith("ダ"):
-                    course_type = "ダート"
-                    try:
-                        distance = int(dist_str[1:])
-                    except ValueError:
-                        pass
-                else:
-                    dm = re.search(r"(\d+)", dist_str)
-                    if dm:
-                        distance = int(dm.group(1))
-
-            # 開催・会場
-            venue_str = _cell("開催", 1)
-            venue = ""
-            if venue_str:
-                # 「阪神1回1日」のような形式から競馬場名を取得
-                for v in _VENUE_CODE.values():
-                    if v in venue_str:
-                        venue = v
-                        break
-
-            # 上がり3F
-            last_3f = 0.0
-            try:
-                last_3f = float(last3f_str)
-            except ValueError:
-                pass
-
-            results.append(
-                {
-                    "race_id": race_id,
-                    "race_name": race_name,
-                    "date": date_str,
-                    "venue": venue,
-                    "distance": distance,
-                    "course_type": course_type,
-                    "track_condition": track_cond,
-                    "finish_position": finish_position,
-                    "time": time_str,
-                    "last_3f": last_3f,
-                    "jockey_name": jockey_name,
-                }
-            )
+            result = self._parse_result_row(tr, col_indices)
+            if result is not None:
+                results.append(result)
 
         return results[:limit]
 

@@ -9,7 +9,7 @@ from app.config import settings
 from app.models import Entry, Horse, Jockey, Race, Result, Trainer
 from app.scoring.engine import ScoringEngine
 from app.scrapers.jra import JraScraper, get_target_race_dates
-from app.scrapers.netkeiba import NetkeibaScraper, _venue_from_race_id
+from app.scrapers.netkeiba import NetkeibaScraper, venue_from_race_id
 from app.scrapers.weather import WeatherClient
 
 logger = logging.getLogger(__name__)
@@ -29,21 +29,94 @@ class FetchService:
             api_key=getattr(settings, "OPENWEATHER_API_KEY", "")
         )
 
-    async def execute(self):
-        """全データ取得フローを実行"""
-        today = date.today()
+    # ------------------------------------------------------------------
+    # 公開メソッド
+    # ------------------------------------------------------------------
 
-        # Step 1: 対象日の決定
+    async def execute(self) -> None:
+        """7ステップのフェッチ・スコアリングパイプラインを実行する"""
+
+        # ステップ1: 対象日を決定する
         self.progress("日程取得", 1, self.TOTAL_STEPS, "対象レース日を決定中...")
-        target_dates = get_target_race_dates(today)
+        target_dates = await self._step_determine_dates()
 
-        # Step 2: 重賞レース一覧の取得
+        # ステップ2: JRAグレードレース一覧とnetkeiba race_idを取得
         self.progress(
             "レース一覧", 2, self.TOTAL_STEPS, "JRAから重賞レース一覧を取得中..."
         )
+        graded_races = await self._step_fetch_race_list(target_dates)
+
+        # レースが見つからない場合は既存DBデータでスコアリングのみ実行
+        if not graded_races:
+            self._run_fallback_scoring()
+            return
+
+        # ステップ3: 各レースのエントリを取得・永続化
+        total_races = len(graded_races)
+        self.progress(
+            "出走馬取得",
+            3,
+            self.TOTAL_STEPS,
+            f"出走馬情報を取得中 (0/{total_races})...",
+            estimated_remaining=total_races * 30,
+        )
+        races = await self._step_fetch_entries(graded_races)
+
+        # ステップ4: 馬プロフィールを取得・永続化
+        horse_ids = self._collect_horse_ids(races)
+        total_horses = len(horse_ids)
+        self.progress(
+            "馬情報取得",
+            4,
+            self.TOTAL_STEPS,
+            f"馬のプロフィールを取得中 (0/{total_horses})...",
+        )
+        await self._step_fetch_profiles(horse_ids)
+
+        # ステップ5: 馬成績を取得・永続化
+        self.progress(
+            "成績取得",
+            5,
+            self.TOTAL_STEPS,
+            f"馬の過去成績を取得中 (0/{total_horses})...",
+        )
+        await self._step_fetch_results(horse_ids)
+
+        # ステップ6: 各レースの天気を取得・更新
+        self.progress(
+            "天気取得",
+            6,
+            self.TOTAL_STEPS,
+            "レース当日の天気を取得中...",
+        )
+        await self._step_fetch_weather(races)
+
+        # ステップ7: スコアリングを実行
+        self.progress(
+            "スコアリング", 7, self.TOTAL_STEPS, "予想スコアを算出中..."
+        )
+        self._step_score(races)
+
+    # ------------------------------------------------------------------
+    # プライベートステップメソッド
+    # ------------------------------------------------------------------
+
+    async def _step_determine_dates(self) -> list[date]:
+        """ステップ1: 対象日を決定する"""
+        today = date.today()
+        return get_target_race_dates(today)
+
+    async def _step_fetch_race_list(
+        self, target_dates: list[date]
+    ) -> list[dict]:
+        """ステップ2: JRAグレードレース一覧とnetkeiba race_idを取得
+
+        JRAから重賞レース一覧を取得し、netkeibaのrace_idと突合して返す。
+        レースが見つからない場合は空リストを返す。
+        """
         graded_races = await self.jra.fetch_graded_races(target_dates)
 
-        # Step 2b: netkeibaからrace_id一覧を取得してgraded_racesに紐付ける
+        # netkeibaからrace_id一覧を日付ごとに取得
         netkeiba_race_map: dict[str, list[dict]] = {}
         for target_date in target_dates:
             nb_list = await self.netkeiba.fetch_race_list_by_date(target_date)
@@ -67,7 +140,7 @@ class FetchService:
             # 1st pass: race_number + venue で完全一致
             for nb_race in nb_races:
                 nb_rid = nb_race.get("race_id", "")
-                nb_venue = _venue_from_race_id(nb_rid)
+                nb_venue = venue_from_race_id(nb_rid)
                 if (
                     nb_race.get("race_number") == race_number
                     and nb_venue == jra_venue
@@ -81,59 +154,17 @@ class FetchService:
                         gr["race_id"] = nb_race["race_id"]
                         break
 
-        if not graded_races:
-            # スクレイパー未実装期間: 既存データでスコアリングのみ実行
-            self.progress(
-                "レース一覧",
-                2,
-                self.TOTAL_STEPS,
-                "重賞レースが見つかりませんでした（スクレイパー未実装）",
-            )
-            self.progress(
-                "出走馬取得",
-                3,
-                self.TOTAL_STEPS,
-                "スクレイパー未実装のためスキップします",
-            )
-            self.progress(
-                "馬情報取得",
-                4,
-                self.TOTAL_STEPS,
-                "スクレイパー未実装のためスキップします",
-            )
-            self.progress(
-                "成績取得",
-                5,
-                self.TOTAL_STEPS,
-                "スクレイパー未実装のためスキップします",
-            )
-            self.progress(
-                "天気取得",
-                6,
-                self.TOTAL_STEPS,
-                "スクレイパー未実装のためスキップします",
-            )
-            self.progress(
-                "スコアリング",
-                7,
-                self.TOTAL_STEPS,
-                "DBのサンプルデータで予想スコアを算出中...",
-            )
-            self._score_existing_races()
-            return
+        return graded_races
 
-        # Step 3: 各レースの出走馬取得とDB保存
+    async def _step_fetch_entries(
+        self, graded_races: list[dict]
+    ) -> list[Race]:
+        """ステップ3: 各レースのエントリを取得・永続化
+
+        取得・保存したレースのリストを返す。
+        """
         total_races = len(graded_races)
-        self.progress(
-            "出走馬取得",
-            3,
-            self.TOTAL_STEPS,
-            f"出走馬情報を取得中 (0/{total_races})...",
-            estimated_remaining=total_races * 30,
-        )
-        race_entries_list = []
-        all_horse_ids: list[str] = []
-        all_venues: list[str] = []
+        persisted_races: list[Race] = []
 
         for i, race_info in enumerate(graded_races, start=1):
             self.progress(
@@ -144,38 +175,37 @@ class FetchService:
                 estimated_remaining=(total_races - i) * 30,
             )
             race_id = race_info.get("race_id", "")
-            if race_id:
-                entries_data = await self.netkeiba.fetch_race_entries(race_id)
-                if entries_data:
-                    # graded_racesのデータでrace_infoを補完
-                    ri = entries_data.get("race_info", {})
-                    if not ri.get("name"):
-                        ri["name"] = race_info.get("name", "")
-                    if not ri.get("grade"):
-                        ri["grade"] = race_info.get("grade", "")
-                    if not ri.get("venue"):
-                        ri["venue"] = race_info.get("venue", "")
-                    race_entries_list.append(entries_data)
-                    self._persist_race_entries(entries_data)
-                    # 全馬IDを収集
-                    for entry in entries_data.get("entries", []):
-                        hid = entry.get("horse_id", "")
-                        if hid and hid not in all_horse_ids:
-                            all_horse_ids.append(hid)
-                    # 会場を収集
-                    venue = ri.get("venue", "")
-                    if venue and venue not in all_venues:
-                        all_venues.append(venue)
+            if not race_id:
+                continue
 
-        # Step 4: 馬プロフィール取得とDB保存
-        total_horses = len(all_horse_ids)
-        self.progress(
-            "馬情報取得",
-            4,
-            self.TOTAL_STEPS,
-            f"馬のプロフィールを取得中 (0/{total_horses})...",
-        )
-        for j, horse_id in enumerate(all_horse_ids, start=1):
+            entries_data = await self.netkeiba.fetch_race_entries(race_id)
+            if not entries_data:
+                continue
+
+            # graded_racesのデータでrace_infoを補完
+            ri = entries_data.get("race_info", {})
+            if not ri.get("name"):
+                ri["name"] = race_info.get("name", "")
+            if not ri.get("grade"):
+                ri["grade"] = race_info.get("grade", "")
+            if not ri.get("venue"):
+                ri["venue"] = race_info.get("venue", "")
+
+            self._persist_race_entries(entries_data)
+
+            # 保存したRaceオブジェクトを収集
+            race = self.db.get(Race, race_id)
+            if race:
+                persisted_races.append(race)
+
+        return persisted_races
+
+    async def _step_fetch_profiles(
+        self, horse_ids: list[str]
+    ) -> None:
+        """ステップ4: 馬プロフィールを取得・永続化"""
+        total_horses = len(horse_ids)
+        for j, horse_id in enumerate(horse_ids, start=1):
             self.progress(
                 "馬情報取得",
                 4,
@@ -186,14 +216,12 @@ class FetchService:
             if profile:
                 self._persist_horse_profile(profile)
 
-        # Step 5: 過去成績取得とDB保存
-        self.progress(
-            "成績取得",
-            5,
-            self.TOTAL_STEPS,
-            f"馬の過去成績を取得中 (0/{total_horses})...",
-        )
-        for k, horse_id in enumerate(all_horse_ids, start=1):
+    async def _step_fetch_results(
+        self, horse_ids: list[str]
+    ) -> None:
+        """ステップ5: 馬成績を取得・永続化"""
+        total_horses = len(horse_ids)
+        for k, horse_id in enumerate(horse_ids, start=1):
             self.progress(
                 "成績取得",
                 5,
@@ -204,27 +232,82 @@ class FetchService:
             if results:
                 self._persist_horse_results(horse_id, results)
 
-        # Step 6: 天気情報取得とRace.weather更新
+    async def _step_fetch_weather(
+        self, races: list[Race]
+    ) -> None:
+        """ステップ6: 各レースの天気を取得・更新"""
+        for race in races:
+            venue = race.venue or ""
+            if not venue:
+                continue
+            weather_info = await self.weather.get_weather(venue)
+            if weather_info:
+                race.weather = weather_info.get("weather", "")
+                self.db.flush()
+
+    def _step_score(
+        self, races: list[Race]
+    ) -> None:
+        """ステップ7: スコアリングを実行"""
+        engine = ScoringEngine(self.db)
+        for race in races:
+            try:
+                engine.predict_race(race.id)
+            except Exception as e:
+                logger.warning("Scoring failed for race %s: %s", race.id, e)
+        self.db.commit()
+
+    # ------------------------------------------------------------------
+    # 内部ユーティリティ
+    # ------------------------------------------------------------------
+
+    def _collect_horse_ids(self, races: list[Race]) -> list[str]:
+        """レースリストから重複なしの馬IDリストを収集する"""
+        horse_ids: list[str] = []
+        for race in races:
+            for entry in race.entries:
+                hid = entry.horse_id
+                if hid and hid not in horse_ids:
+                    horse_ids.append(hid)
+        return horse_ids
+
+    def _run_fallback_scoring(self) -> None:
+        """重賞レースが見つからない場合の既存DBデータでのスコアリング"""
+        self.progress(
+            "レース一覧",
+            2,
+            self.TOTAL_STEPS,
+            "重賞レースが見つかりませんでした（スクレイパー未実装）",
+        )
+        self.progress(
+            "出走馬取得",
+            3,
+            self.TOTAL_STEPS,
+            "スクレイパー未実装のためスキップします",
+        )
+        self.progress(
+            "馬情報取得",
+            4,
+            self.TOTAL_STEPS,
+            "スクレイパー未実装のためスキップします",
+        )
+        self.progress(
+            "成績取得",
+            5,
+            self.TOTAL_STEPS,
+            "スクレイパー未実装のためスキップします",
+        )
         self.progress(
             "天気取得",
             6,
             self.TOTAL_STEPS,
-            "レース当日の天気を取得中...",
+            "スクレイパー未実装のためスキップします",
         )
-        for entries_data in race_entries_list:
-            ri = entries_data.get("race_info", {})
-            race_id = ri.get("race_id", "")
-            venue = ri.get("venue", "")
-            if race_id and venue:
-                weather_info = await self.weather.get_weather(venue)
-                race = self.db.get(Race, race_id)
-                if race and weather_info:
-                    race.weather = weather_info.get("weather", "")
-                    self.db.flush()
-
-        # Step 7: スコアリング
         self.progress(
-            "スコアリング", 7, self.TOTAL_STEPS, "予想スコアを算出中..."
+            "スコアリング",
+            7,
+            self.TOTAL_STEPS,
+            "DBのサンプルデータで予想スコアを算出中...",
         )
         self._score_existing_races()
 
@@ -446,8 +529,8 @@ class FetchService:
 
         self.db.flush()
 
-    def _score_existing_races(self):
-        """DBに存在するレースに対してスコアリングを実行"""
+    def _score_existing_races(self) -> None:
+        """DBに存在する全レースに対してスコアリングを実行"""
         engine = ScoringEngine(self.db)
         races = self.db.query(Race).all()
         for race in races:
