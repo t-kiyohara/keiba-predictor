@@ -27,3 +27,10 @@ FACTOR_LABELS = {
     "trainer": "調教師成績",
     "overall": "総合実績",
 }
+
+# スコアリング共通定数
+NEUTRAL_SCORE: float = 50.0
+"""データ不足時のデフォルトスコア (factors.py 全域で使用)"""
+
+DISTANCE_TOLERANCE_M: int = 200
+"""距離マッチングの許容範囲 (メートル)"""

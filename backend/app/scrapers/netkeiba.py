@@ -4,6 +4,7 @@ import re
 from datetime import date
 
 from app.scrapers.base import BaseScraper
+from app.scrapers.constants import GRADE_NORMALIZE, GRADE_PATTERN
 
 # race_idの5〜6桁目（0始まり: インデックス4-5）で会場を判定
 _VENUE_CODE: dict[str, str] = {
@@ -19,29 +20,12 @@ _VENUE_CODE: dict[str, str] = {
     "10": "小倉",
 }
 
-# グレード正規化マップ（netkeibaのレース名中の表記）
-_GRADE_NORMALIZE: dict[str, str] = {
-    "GⅠ": "G1",
-    "GⅡ": "G2",
-    "GⅢ": "G3",
-    "G1": "G1",
-    "G2": "G2",
-    "G3": "G3",
-    "J・GⅠ": "G1",
-    "J・GⅡ": "G2",
-    "J・GⅢ": "G3",
-}
-
-_GRADE_PATTERN = re.compile(
-    r"\((" + "|".join(re.escape(k) for k in _GRADE_NORMALIZE) + r")\)"
-)
-
 
 def _normalize_grade(text: str) -> str:
     """レース名テキストからグレードを抽出して正規化する。"""
-    m = _GRADE_PATTERN.search(text)
+    m = GRADE_PATTERN.search(text)
     if m:
-        return _GRADE_NORMALIZE.get(m.group(1), "")
+        return GRADE_NORMALIZE.get(m.group(1), "")
     return ""
 
 

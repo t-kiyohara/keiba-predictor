@@ -1,4 +1,5 @@
 import { Prediction } from '../types';
+import { RANK_BADGE } from '../constants/badge';
 
 interface Props {
   predictions: Prediction[];
@@ -10,12 +11,6 @@ const ROW_HIGHLIGHT: Record<number, string> = {
   1: 'bg-yellow-500/20',
   2: 'bg-gray-400/20',
   3: 'bg-amber-700/20',
-};
-
-const RANK_BADGE: Record<number, string> = {
-  1: 'badge-warning',
-  2: 'badge-ghost',
-  3: 'badge-accent',
 };
 
 export default function ScoreTable({ predictions, onHorseClick, selectedHorseId }: Props) {

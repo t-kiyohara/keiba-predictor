@@ -1,16 +1,11 @@
 import { Link } from 'react-router-dom';
 import { Race } from '../types';
 import WeatherBadge from './WeatherBadge';
+import { GRADE_CLASS } from '../constants/badge';
 
 interface Props {
   race: Race;
 }
-
-const GRADE_CLASS: Record<string, string> = {
-  G1: 'badge-error',
-  G2: 'badge-warning',
-  G3: 'badge-success',
-};
 
 export default function RaceCard({ race }: Props) {
   return (

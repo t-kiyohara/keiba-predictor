@@ -2,13 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Horse, RaceResult } from '../types';
 import { useApi } from '../hooks/useApi';
-
-const TRACK_CONDITION_CLASS: Record<string, string> = {
-  良: 'badge-success',
-  稍重: 'badge-warning',
-  重: 'badge-error',
-  不良: 'badge-error',
-};
+import { TRACK_CONDITION_CLASS } from '../constants/badge';
 
 function calcAge(birthday: string | null): string {
   if (!birthday) return '-';

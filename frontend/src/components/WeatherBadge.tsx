@@ -1,3 +1,5 @@
+import { TRACK_CONDITION_CLASS } from '../constants/badge';
+
 interface Props {
   weather: string | null;
   trackCondition: string | null;
@@ -10,13 +12,6 @@ const WEATHER_ICON: Record<string, string> = {
   曇: '☁️',
   雨: '🌧️',
   雪: '❄️',
-};
-
-const TRACK_CONDITION_CLASS: Record<string, string> = {
-  良: 'badge-success',
-  稍重: 'badge-warning',
-  重: 'badge-error',
-  不良: 'badge-error',
 };
 
 export default function WeatherBadge({ weather, trackCondition }: Props) {

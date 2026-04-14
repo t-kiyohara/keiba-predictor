@@ -5,18 +5,13 @@ import { useApi } from '../hooks/useApi';
 import ScoreTable from '../components/ScoreTable';
 import ScoreChart from '../components/ScoreChart';
 import WeatherBadge from '../components/WeatherBadge';
+import { RANK_BADGE, GRADE_CLASS } from '../constants/badge';
 
 // トップ3カードの背景グラデーション
 const RANK_GRADIENT: Record<number, string> = {
   1: 'bg-gradient-to-br from-yellow-500/30 via-amber-400/20 to-yellow-600/10 border border-yellow-500/30',
   2: 'bg-gradient-to-br from-slate-400/30 via-gray-300/20 to-slate-500/10 border border-slate-400/30',
   3: 'bg-gradient-to-br from-amber-700/30 via-orange-600/20 to-amber-800/10 border border-amber-700/30',
-};
-
-const RANK_BADGE: Record<number, string> = {
-  1: 'badge-warning',
-  2: 'badge-ghost',
-  3: 'badge-accent',
 };
 
 const RANK_LABEL: Record<number, string> = {
@@ -137,7 +132,7 @@ export default function RaceDetail() {
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="card-title text-2xl">{race.name}</h1>
             {race.grade && (
-              <span className={`badge ${race.grade === 'G1' ? 'badge-error' : race.grade === 'G2' ? 'badge-warning' : 'badge-success'} badge-lg`}>
+              <span className={`badge ${GRADE_CLASS[race.grade] ?? 'badge-neutral'} badge-lg`}>
                 {race.grade}
               </span>
             )}

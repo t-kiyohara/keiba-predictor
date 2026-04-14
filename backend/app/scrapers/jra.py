@@ -4,6 +4,7 @@ import re
 from datetime import date, timedelta
 
 from app.scrapers.base import BaseScraper
+from app.scrapers.constants import GRADE_NORMALIZE, GRADE_PATTERN
 
 
 def get_target_race_dates(today: date) -> list[date]:
@@ -30,21 +31,6 @@ def get_target_race_dates(today: date) -> list[date]:
         next_saturday = today + timedelta(days=days_until_saturday)
         next_sunday = next_saturday + timedelta(days=1)
         return [next_saturday, next_sunday]
-
-
-# グレード正規化マップ
-_GRADE_NORMALIZE: dict[str, str] = {
-    "GⅠ": "G1",
-    "GⅡ": "G2",
-    "GⅢ": "G3",
-    "J・GⅠ": "G1",
-    "J・GⅡ": "G2",
-    "J・GⅢ": "G3",
-}
-
-# グレードパターン（括弧内に含まれる形式）
-_GRADE_INNER = "|".join(re.escape(k) for k in _GRADE_NORMALIZE)
-_GRADE_PATTERN = re.compile(r"[（(](" + _GRADE_INNER + r")[）)]")
 
 
 class JraScraper(BaseScraper):
@@ -84,11 +70,11 @@ class JraScraper(BaseScraper):
             h3_text = h3.get_text(strip=True)
 
             # グレード判定
-            grade_match = _GRADE_PATTERN.search(h3_text)
+            grade_match = GRADE_PATTERN.search(h3_text)
             if not grade_match:
                 continue
             grade_raw = grade_match.group(1)
-            grade = _GRADE_NORMALIZE.get(grade_raw, "")
+            grade = GRADE_NORMALIZE.get(grade_raw, "")
             if not grade:
                 continue
 
