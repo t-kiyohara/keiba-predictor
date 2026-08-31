@@ -314,11 +314,12 @@ class FetchService:
         date_str = ri.get("date", "")
         if date_str:
             try:
-                race_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                parsed_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
-                race_date = date.today()
+                parsed_date = None
         else:
-            race_date = date.today()
+            parsed_date = None
+        race_date = parsed_date or date.today()
 
         race = self.db.get(Race, race_id)
         if race is None:
@@ -334,6 +335,15 @@ class FetchService:
             self.db.add(race)
         else:
             # 既存レコードを更新
+            # date はスタブ(1月1日。JRAは元日開催なし)のときだけ実日付で修復する
+            is_real_date = parsed_date is not None and not (
+                parsed_date.month == 1 and parsed_date.day == 1
+            )
+            has_stub_date = race.date is None or (
+                race.date.month == 1 and race.date.day == 1
+            )
+            if is_real_date and has_stub_date:
+                race.date = parsed_date
             if ri.get("name"):
                 race.name = ri["name"]
             if ri.get("venue"):

@@ -452,7 +452,8 @@ class NetkeibaScraper(BaseScraper):
         """
         url = f"{self.BASE_URL}/race/shutuba.html?race_id={race_id}"
         try:
-            html = await self.fetch(url, encoding="euc-jp")
+            # race.netkeiba.com は UTF-8(EUC-JP なのは db.netkeiba.com 側のみ)
+            html = await self.fetch(url)
         except Exception as e:
             self.logger.warning("出馬表取得失敗 (race_id=%s): %s", race_id, e)
             return {}

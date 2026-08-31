@@ -1649,3 +1649,48 @@ class TestNetkeibaFetchGradedRaceIds:
 
         assert race_ids == []
         assert mock.await_count == 1
+
+
+class TestPersistRaceEntriesDateHealing:
+    """スタブ日付(1月1日)のレースを出馬表の実日付で修復する規則のテスト。"""
+
+    @staticmethod
+    def _entries_data(date_str: str) -> dict:
+        return {
+            "race_info": {
+                "race_id": "202606040211",
+                "name": "紫苑ステークス",
+                "date": date_str,
+                "venue": "中山",
+                "grade": "G2",
+                "distance": 2000,
+                "course_type": "芝",
+            },
+            "entries": [],
+        }
+
+    def test_stub_date_is_healed_by_real_date(self, db):
+        """1月1日スタブのレースは、実日付が取れたとき修復されること。"""
+        from datetime import date as date_type
+
+        from app.services.fetch_service import FetchService
+        from tests.factories import make_race
+
+        make_race(db, "202606040211", race_date=date_type(2026, 1, 1))
+        FetchService(db=db)._persist_race_entries(self._entries_data("2026-09-05"))
+
+        from app.models import Race
+        assert db.get(Race, "202606040211").date == date_type(2026, 9, 5)
+
+    def test_real_date_is_not_overwritten_by_sentinel(self, db):
+        """実日付を持つレースは、スクレイパーの1月1日フォールバックで潰さないこと。"""
+        from datetime import date as date_type
+
+        from app.services.fetch_service import FetchService
+        from tests.factories import make_race
+
+        make_race(db, "202606040211", race_date=date_type(2026, 9, 5))
+        FetchService(db=db)._persist_race_entries(self._entries_data("2026-01-01"))
+
+        from app.models import Race
+        assert db.get(Race, "202606040211").date == date_type(2026, 9, 5)
