@@ -20,3 +20,4 @@ class Race(Base):
     entries = relationship("Entry", back_populates="race")
     results = relationship("Result", back_populates="race")
     predictions = relationship("Prediction", back_populates="race")
+    payouts = relationship("Payout", back_populates="race")

@@ -23,12 +23,83 @@ _VENUE_CODE: dict[str, str] = {
     "10": "小倉",
 }
 
+# db.netkeiba.com の払戻テーブルは th の class で券種を表す
+_BET_TYPE_BY_CLASS: dict[str, str] = {
+    "tan": "単勝",
+    "fuku": "複勝",
+    "waku": "枠連",
+    "uren": "馬連",
+    "wide": "ワイド",
+    "utan": "馬単",
+    "sanfuku": "三連複",
+    "santan": "三連単",
+}
+
+# db.netkeiba.com の着順テーブル（table.race_table_01）の列順フォールバック。
+# 通常はヘッダー文字列から動的に引くが、ヘッダーが取れない場合に使う。
+_RESULT_COLUMN_FALLBACK: dict[str, int] = {
+    "着順": 0,
+    "枠番": 1,
+    "馬番": 2,
+    "馬名": 3,
+    "性齢": 4,
+    "斤量": 5,
+    "騎手": 6,
+    "タイム": 7,
+    "着差": 8,
+    "通過": 14,
+    "上り": 15,
+    "単勝": 16,
+    "人気": 17,
+    "馬体重": 18,
+    "調教師": 22,
+}
+
+
 def _normalize_grade(text: str) -> str:
     """レース名テキストからグレードを抽出して正規化する。"""
     m = GRADE_PATTERN.search(text)
     if m:
         return GRADE_NORMALIZE.get(m.group(1), "")
     return ""
+
+
+def _to_int(text: str | None) -> int | None:
+    """数値文字列をintに変換する。変換できない場合はNoneを返す。"""
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float(text: str | None) -> float | None:
+    """数値文字列をfloatに変換する。変換できない場合はNoneを返す。"""
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _link_id_and_name(cell, url_path: str) -> tuple[str, str]:
+    """セル内の最初のリンクから `/{url_path}/...` のIDとリンクテキストを取り出す。
+
+    調教師セルはリンクの手前に `[西]` / `[東]` が付くため、セル全体ではなく
+    リンクのテキストを名前として使う。
+
+    Args:
+        cell: BeautifulSoupのtdタグ（Noneの場合は空文字を返す）
+        url_path: URLパスの先頭セグメント（"horse" / "jockey" / "trainer"）
+
+    Returns:
+        (ID, 名前) のタプル。取得できない要素は空文字。
+    """
+    if cell is None:
+        return "", ""
+    link = cell.find("a", href=True)
+    if link is None:
+        return "", ""
+    match = re.search(rf"/{url_path}/(?:result/recent/)?(\w+)", link["href"])
+    return (match.group(1) if match else ""), link.get_text(strip=True)
 
 
 def venue_from_race_id(race_id: str) -> str:
@@ -654,6 +725,230 @@ class NetkeibaScraper(BaseScraper):
                 results.append(result)
 
         return results[:limit]
+
+    def _parse_race_result_info(self, soup: BeautifulSoup, race_id: str) -> dict:
+        """レース結果ページ（db.netkeiba.com）からレース情報を抽出する。
+
+        Args:
+            soup: レース結果ページのBeautifulSoupオブジェクト
+            race_id: netkeibaのレースID
+
+        Returns:
+            race_id, name, grade, date, venue, course_type, distance,
+            weather, track_condition を含む辞書
+        """
+        # レース名: div.data_intro > dl.racedata > dd > h1
+        name_el = soup.select_one("div.data_intro dl.racedata h1") or soup.select_one(
+            "div.data_intro h1"
+        )
+        race_name = name_el.get_text(strip=True) if name_el else ""
+
+        # コース情報: h1直後の <p><span>
+        #   例: 芝左2400m / 天候 : 晴 / 芝 : 良 / 発走 : 15:40
+        #   ダートは「ダ左1800m / ... / ダート : 良 / ...」と馬場のキー名が変わる
+        course_text = ""
+        if name_el is not None:
+            span_el = name_el.find_next("span")
+            if span_el is not None:
+                course_text = span_el.get_text(" ", strip=True)
+        if not course_text:
+            intro_el = soup.select_one("div.data_intro")
+            course_text = intro_el.get_text(" ", strip=True) if intro_el else ""
+
+        # 距離とコース種別（"芝左2400m" / "ダ左1800m" / "障芝2910m"）
+        distance = 0
+        course_type = ""
+        course_match = re.search(r"([芝ダ障][^/\d]{0,3}?)(\d{3,4})m", course_text)
+        if course_match:
+            course_type = "ダート" if "ダ" in course_match.group(1) else "芝"
+            distance = int(course_match.group(2))
+
+        # 天候・馬場状態（"キー : 値" を "/" 区切りで並べたテキスト）
+        weather = ""
+        track_condition = ""
+        for segment in course_text.split("/"):
+            key, _, value = segment.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if not value:
+                continue
+            if key == "天候":
+                weather = value
+            elif key in ("芝", "ダート"):
+                track_condition = value
+
+        # 開催日: <p class="smalltxt">2024年05月26日 2回東京12日目 ...</p>
+        race_date = ""
+        smalltxt_el = soup.select_one("p.smalltxt")
+        if smalltxt_el:
+            date_match = re.search(
+                r"(\d{4})年(\d{1,2})月(\d{1,2})日", smalltxt_el.get_text()
+            )
+            if date_match:
+                race_date = (
+                    f"{date_match.group(1)}-"
+                    f"{int(date_match.group(2)):02d}-"
+                    f"{int(date_match.group(3)):02d}"
+                )
+
+        return {
+            "race_id": race_id,
+            "name": race_name,
+            "grade": _normalize_grade(race_name),
+            "date": race_date,
+            "venue": venue_from_race_id(race_id),
+            "course_type": course_type,
+            "distance": distance,
+            "weather": weather,
+            "track_condition": track_condition,
+        }
+
+    def _parse_race_result_row(self, row, col_indices: dict[str, int]) -> dict | None:
+        """着順テーブルの1行をパースする。着順が非数値の行はNoneを返す。
+
+        Args:
+            row: BeautifulSoupのtrタグ（データ行）
+            col_indices: _detect_column_indices()で取得したカラム名→インデックス
+
+        Returns:
+            着順情報の辞書。取消/中止/除外（着順が非数値）の行はNone。
+        """
+        # 一部のtdは非標準タグ <diary_snap_cut> に包まれるが、find_all("td")では
+        # 25個のtdがそのまま取得できる
+        cells = row.find_all("td")
+        if not cells:
+            return None
+
+        def _cell(col_name: str):
+            index = col_indices.get(
+                col_name, _RESULT_COLUMN_FALLBACK.get(col_name, -1)
+            )
+            if index < 0 or index >= len(cells):
+                return None
+            return cells[index]
+
+        def _text(col_name: str) -> str:
+            cell = _cell(col_name)
+            return cell.get_text(strip=True) if cell is not None else ""
+
+        # 取消/中止/除外は着順が「取」「中」「除」等の非数値になる
+        finish_position = _to_int(_text("着順"))
+        if finish_position is None:
+            return None
+
+        horse_id, horse_name = _link_id_and_name(_cell("馬名"), "horse")
+        jockey_id, jockey_name = _link_id_and_name(_cell("騎手"), "jockey")
+        trainer_id, trainer_name = _link_id_and_name(_cell("調教師"), "trainer")
+
+        return {
+            "horse_id": horse_id,
+            "horse_name": horse_name,
+            "horse_number": _to_int(_text("馬番")),
+            "finish_position": finish_position,
+            "time": _text("タイム") or None,
+            "margin": _text("着差") or None,
+            "last_3f": _to_float(_text("上り")),
+            "jockey_id": jockey_id,
+            "jockey_name": jockey_name,
+            "trainer_id": trainer_id,
+            "trainer_name": trainer_name,
+        }
+
+    def _parse_payout_tables(self, soup: BeautifulSoup) -> list[dict]:
+        """払戻テーブル（table.pay_table_01 が2つ）から払戻金を抽出する。
+
+        Args:
+            soup: レース結果ページのBeautifulSoupオブジェクト
+
+        Returns:
+            {"bet_type", "combination", "amount"} の辞書のリスト
+        """
+        payouts: list[dict] = []
+        for table in soup.select("table.pay_table_01"):
+            for row in table.find_all("tr"):
+                header_cell = row.find("th")
+                if header_cell is None:
+                    continue
+                # 券種はthのclassで判定する（テキストは券種名だが表記揺れがある）
+                bet_type = next(
+                    (
+                        _BET_TYPE_BY_CLASS[class_name]
+                        for class_name in header_cell.get("class", [])
+                        if class_name in _BET_TYPE_BY_CLASS
+                    ),
+                    "",
+                )
+                if not bet_type:
+                    continue
+
+                cells = row.find_all("td")
+                if len(cells) < 2:
+                    continue
+                # 複勝・ワイドの複数払戻は1つのtd内で<br/>区切り。
+                # stripped_stringsでテキストノードごとに分解できる。
+                combinations = list(cells[0].stripped_strings)
+                amounts = list(cells[1].stripped_strings)
+                for combination, amount_text in zip(
+                    combinations, amounts, strict=False
+                ):
+                    # 組番は空白を除去（"5 - 15" → "5-15"）。区切り記号は原文のまま
+                    normalized_combination = re.sub(r"\s+", "", combination)
+                    amount = _to_int(amount_text.replace(",", ""))
+                    if not normalized_combination or amount is None:
+                        continue
+                    payouts.append(
+                        {
+                            "bet_type": bet_type,
+                            "combination": normalized_combination,
+                            "amount": amount,
+                        }
+                    )
+        return payouts
+
+    async def fetch_race_result(self, race_id: str) -> dict:
+        """db.netkeiba.com のレース結果ページから全着順と払戻を取得する。
+
+        Args:
+            race_id: netkeibaのレースID（例: "202405021212"）
+
+        Returns:
+            {"race": {...}, "results": [...], "payouts": [...]} の辞書。
+            エラー時・着順テーブルが取れない場合は空dict `{}` を返す。
+        """
+        url = f"{self.DB_URL}/race/{race_id}/"
+        try:
+            html = await self.fetch(url, encoding="euc-jp")
+        except Exception as e:
+            self.logger.warning("レース結果取得失敗 (race_id=%s): %s", race_id, e)
+            return {}
+
+        soup = self.parse_html(html)
+        table = soup.select_one("table.race_table_01")
+        if table is None:
+            self.logger.warning("着順テーブルが見つかりません (race_id=%s)", race_id)
+            return {}
+
+        rows = table.find_all("tr")
+        header_row = rows[0] if rows else None
+        col_indices = (
+            self._detect_column_indices(header_row) if header_row is not None else {}
+        )
+
+        results: list[dict] = []
+        for row in rows[1:]:
+            parsed_row = self._parse_race_result_row(row, col_indices)
+            if parsed_row is not None:
+                results.append(parsed_row)
+
+        if not results:
+            self.logger.warning("着順データが空です (race_id=%s)", race_id)
+            return {}
+
+        return {
+            "race": self._parse_race_result_info(soup, race_id),
+            "results": results,
+            "payouts": self._parse_payout_tables(soup),
+        }
 
     async def fetch_race_results_history(
         self, race_name: str, limit: int = 5

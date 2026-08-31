@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.models import Horse, Race
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from app.models import Entry, Horse, Payout, Race, Result
 
 
 class TestRaceModel:
@@ -114,3 +117,72 @@ class TestHorseModel:
         fetched = db.get(Horse, "test_horse_003")
         assert fetched.entries == []
         assert fetched.results == []
+
+
+class TestUniqueConstraints:
+    """DBレベルの一意制約がスキーマに反映されていることの確認。"""
+
+    def _make_race_and_horse(self, db, suffix: str) -> tuple[str, str]:
+        race_id = f"r_uq_{suffix}"
+        horse_id = f"h_uq_{suffix}"
+        db.add(
+            Race(
+                id=race_id,
+                name="制約テスト",
+                date=date(2024, 4, 28),
+                venue="東京",
+                course_type="芝",
+                distance=2000,
+                grade="G1",
+            )
+        )
+        db.add(Horse(id=horse_id, name="制約テスト馬"))
+        db.flush()
+        return race_id, horse_id
+
+    def test_entry_race_horse_is_unique(self, db):
+        race_id, horse_id = self._make_race_and_horse(db, "entry")
+        db.add(Entry(race_id=race_id, horse_id=horse_id, horse_number=1))
+        db.flush()
+
+        db.add(Entry(race_id=race_id, horse_id=horse_id, horse_number=2))
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+
+    def test_result_race_horse_is_unique(self, db):
+        race_id, horse_id = self._make_race_and_horse(db, "result")
+        db.add(Result(race_id=race_id, horse_id=horse_id, finish_position=1))
+        db.flush()
+
+        db.add(Result(race_id=race_id, horse_id=horse_id, finish_position=2))
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+
+    def test_payout_race_bet_combination_is_unique(self, db):
+        race_id, _ = self._make_race_and_horse(db, "payout")
+        db.add(
+            Payout(race_id=race_id, bet_type="単勝", combination="5", amount=4660)
+        )
+        db.flush()
+
+        db.add(Payout(race_id=race_id, bet_type="単勝", combination="5", amount=200))
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+
+    def test_payout_allows_multiple_combinations_per_bet_type(self, db):
+        """複勝のように同一券種で複数組番があるケースは許可されること。"""
+        race_id, _ = self._make_race_and_horse(db, "payout_multi")
+        db.add_all(
+            [
+                Payout(
+                    race_id=race_id, bet_type="複勝", combination="5", amount=1020
+                ),
+                Payout(race_id=race_id, bet_type="複勝", combination="15", amount=240),
+            ]
+        )
+        db.flush()
+
+        assert db.query(Payout).filter_by(race_id=race_id).count() == 2

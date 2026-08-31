@@ -75,11 +75,13 @@ def make_result(
     margin: str | None = None,
     jockey_name: str | None = None,
     trainer_name: str | None = None,
+    horse_number: int | None = None,
 ) -> Result:
     """Result を生成して DB に追加する"""
     result = Result(
         race_id=race_id,
         horse_id=horse_id,
+        horse_number=horse_number,
         finish_position=finish_position,
         time=time,
         last_3f=last_3f,

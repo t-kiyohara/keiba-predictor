@@ -1,4 +1,11 @@
-from sqlalchemy import Column, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    Column,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -6,6 +13,9 @@ from app.database import Base
 
 class Entry(Base):
     __tablename__ = "entries"
+    __table_args__ = (
+        UniqueConstraint("race_id", "horse_id", name="uq_entry_race_horse"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     race_id = Column(String, ForeignKey("races.id"), nullable=False, index=True)

@@ -253,6 +253,160 @@ HORSE_RESULTS_HTML = """
 """
 
 
+# db.netkeiba.com レース結果ページフィクスチャ（着順テーブル25列 + 払戻2テーブル）
+# - 3行目は取消行（着順が非数値、単勝="---"、馬体重="計不"）
+# - 2行目の馬名セルは非標準タグ <diary_snap_cut> に包まれている
+# - 調教師セルはaタグの前に [西]/[東] テキストが付く
+RACE_RESULT_HTML = """
+<html><body>
+<div class="data_intro">
+  <dl class="racedata fc">
+    <dt>12 R</dt>
+    <dd>
+      <h1>第91回東京優駿(GI)</h1>
+      <p><diary_snap_cut>
+        <span>芝左2400m / 天候 : 晴 / 芝 : 良 / 発走 : 15:40</span>
+      </diary_snap_cut></p>
+    </dd>
+  </dl>
+  <p class="smalltxt">2024年05月26日 2回東京12日目&nbsp;3歳オープン</p>
+</div>
+<table class="race_table_01">
+<tr>
+  <th>着順</th><th>枠番</th><th>馬番</th><th>馬名</th><th>性齢</th><th>斤量</th>
+  <th>騎手</th><th>タイム</th><th>着差</th><th>ﾀｲﾑ指数</th><th>ﾀｲﾑ指数M</th>
+  <th>ｽﾀｰﾄ指数</th><th>追走指数</th><th>上がり指数</th><th>通過</th><th>上り</th>
+  <th>単勝</th><th>人気</th><th>馬体重</th><th>調教ﾀｲﾑ</th><th>厩舎ｺﾒﾝﾄ</th>
+  <th>備考</th><th>調教師</th><th>馬主</th><th>賞金(万円)</th>
+</tr>
+<tr>
+  <td>1</td><td>5</td><td>10</td>
+  <td><a href="/horse/2021105165/">テスト馬A</a></td>
+  <td>牡3</td><td>57</td>
+  <td><a href="/jockey/result/recent/01167/">テスト騎手A</a></td>
+  <td>2:24.3</td><td></td>
+  <td></td><td></td><td></td><td></td><td></td>
+  <td>2-2-2-2</td><td>33.5</td><td>46.6</td><td>12</td><td>488(+2)</td>
+  <td></td><td></td><td></td>
+  <td><diary_snap_cut>[西]
+    <a href="/trainer/result/recent/01126/">テスト調教師A</a></diary_snap_cut></td>
+  <td><a href="/owner/199401/">テストオーナーA</a></td><td>30000.0</td>
+</tr>
+<tr>
+  <td>2</td><td>8</td><td>15</td>
+  <td><diary_snap_cut><a href="/horse/2021104976/">テスト馬B</a></diary_snap_cut></td>
+  <td>牡3</td><td>57</td>
+  <td><a href="/jockey/result/recent/01088/">テスト騎手B</a></td>
+  <td>2:24.4</td><td>クビ</td>
+  <td></td><td></td><td></td><td></td><td></td>
+  <td>5-5-5-4</td><td>33.9</td><td>2.1</td><td>1</td><td>512(0)</td>
+  <td></td><td></td><td></td>
+  <td><diary_snap_cut>[東]
+    <a href="/trainer/result/recent/01110/">テスト調教師B</a></diary_snap_cut></td>
+  <td><a href="/owner/475400/">テストオーナーB</a></td><td>12000.0</td>
+</tr>
+<tr>
+  <td>取</td><td>3</td><td>5</td>
+  <td><a href="/horse/2021109999/">取消馬C</a></td>
+  <td>牝3</td><td>55</td>
+  <td><a href="/jockey/result/recent/01999/">テスト騎手C</a></td>
+  <td></td><td></td>
+  <td></td><td></td><td></td><td></td><td></td>
+  <td></td><td></td><td>---</td><td></td><td>計不</td>
+  <td></td><td></td><td></td>
+  <td><diary_snap_cut>[西]
+    <a href="/trainer/result/recent/01999/">テスト調教師C</a></diary_snap_cut></td>
+  <td><a href="/owner/999999/">テストオーナーC</a></td><td></td>
+</tr>
+</table>
+<table class="pay_table_01">
+<tr><th class="tan">単勝</th><td class="txt_r">10</td><td class="txt_r">4,660</td>
+    <td class="txt_r">12</td></tr>
+<tr><th class="fuku">複勝</th>
+    <td class="txt_r">10<br/>15<br/>13</td>
+    <td class="txt_r">1,020<br/>240<br/>210</td>
+    <td class="txt_r">12<br/>3<br/>2</td></tr>
+<tr><th class="waku">枠連</th><td class="txt_r">5 - 8</td><td class="txt_r">2,300</td>
+    <td class="txt_r">10</td></tr>
+<tr><th class="uren">馬連</th><td class="txt_r">10 - 15</td>
+    <td class="txt_r">14,220</td><td class="txt_r">45</td></tr>
+</table>
+<table class="pay_table_01">
+<tr><th class="wide">ワイド</th>
+    <td class="txt_r">10 - 15<br/>10 - 13<br/>13 - 15</td>
+    <td class="txt_r">4,240<br/>3,290<br/>640</td>
+    <td class="txt_r">44<br/>36<br/>6</td></tr>
+<tr><th class="utan">馬単</th><td class="txt_r">10 → 15</td>
+    <td class="txt_r">32,600</td><td class="txt_r">101</td></tr>
+<tr><th class="sanfuku">三連複</th><td class="txt_r">10 - 13 - 15</td>
+    <td class="txt_r">25,180</td><td class="txt_r">78</td></tr>
+<tr><th class="santan">三連単</th><td class="txt_r">10 → 15 → 13</td>
+    <td class="txt_r">212,300</td><td class="txt_r">601</td></tr>
+</table>
+</body></html>
+"""
+
+# ダートのレース結果フィクスチャ（馬場キーが「ダート」、ASCIIグレード (GIII)）
+RACE_RESULT_DIRT_HTML = """
+<html><body>
+<div class="data_intro">
+  <dl class="racedata fc">
+    <dt>11 R</dt>
+    <dd>
+      <h1>第41回テストダート記念(GIII)</h1>
+      <p><span>ダ左1600m / 天候 : 曇 / ダート : 稍重 / 発走 : 15:40</span></p>
+    </dd>
+  </dl>
+  <p class="smalltxt">2024年02月18日 1回東京8日目</p>
+</div>
+<table class="race_table_01">
+<tr><th>着順</th><th>枠番</th><th>馬番</th><th>馬名</th><th>性齢</th><th>斤量</th>
+    <th>騎手</th><th>タイム</th><th>上り</th></tr>
+<tr><td>1</td><td>2</td><td>3</td>
+    <td><a href="/horse/2020101111/">ダート馬A</a></td>
+    <td>牡5</td><td>57</td>
+    <td><a href="/jockey/result/recent/01001/">騎手X</a></td>
+    <td>1:34.5</td><td>36.1</td></tr>
+</table>
+</body></html>
+"""
+
+# 障害のレース結果フィクスチャ（ASCIIの障害グレード (JGIII)、コース「障芝」）
+RACE_RESULT_JUMP_HTML = """
+<html><body>
+<div class="data_intro">
+  <dl class="racedata fc">
+    <dt>9 R</dt>
+    <dd>
+      <h1>第26回テスト障害ステークス(JGIII)</h1>
+      <p><span>障芝3000m / 天候 : 晴 / 芝 : 良 / 発走 : 15:25</span></p>
+    </dd>
+  </dl>
+  <p class="smalltxt">2024年04月13日 3回中山6日目</p>
+</div>
+<table class="race_table_01">
+<tr><th>着順</th><th>枠番</th><th>馬番</th><th>馬名</th><th>性齢</th><th>斤量</th>
+    <th>騎手</th><th>タイム</th><th>上り</th></tr>
+<tr><td>1</td><td>1</td><td>1</td>
+    <td><a href="/horse/2019102222/">障害馬A</a></td>
+    <td>牡7</td><td>63</td>
+    <td><a href="/jockey/result/recent/01002/">騎手Y</a></td>
+    <td>3:19.8</td><td></td></tr>
+</table>
+</body></html>
+"""
+
+# 着順テーブルなしのレース結果フィクスチャ
+RACE_RESULT_NO_TABLE_HTML = """
+<html><body>
+<div class="data_intro"><dl class="racedata">
+  <dd><h1>存在しないレース</h1></dd>
+</dl></div>
+<p>データがありません</p>
+</body></html>
+"""
+
+
 # ---------------------------------------------------------------------------
 # get_target_race_dates
 # ---------------------------------------------------------------------------
@@ -1167,3 +1321,198 @@ class TestNetkeibaFetchRaceListByDate:
             result = await scraper.fetch_race_list_by_date(date(2026, 5, 6))
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# グレード正規化（constants.GRADE_NORMALIZE / GRADE_PATTERN）
+# ---------------------------------------------------------------------------
+
+
+class TestGradeNormalize:
+    """ローマ数字表記（race.netkeiba）とASCII表記（db.netkeiba）の両対応テスト。"""
+
+    @pytest.mark.parametrize(
+        ("race_name", "expected"),
+        [
+            # 既存のローマ数字表記（挙動を変えないこと）
+            ("天皇賞（春）（GⅠ）", "G1"),
+            ("青葉賞(GⅡ)", "G2"),
+            ("福島牝馬ステークス（GⅢ）", "G3"),
+            ("阪神スプリングジャンプ（J・GⅡ）", "G2"),
+            # db.netkeiba.com のASCII表記
+            ("第91回東京優駿(GI)", "G1"),
+            ("第85回皐月賞(GII)", "G2"),
+            ("第41回テストダート記念(GIII)", "G3"),
+            ("第76回中山大障害(JGI)", "G1"),
+            ("第26回テスト障害ステークス(JGII)", "G2"),
+            ("第26回テスト障害ステークス(JGIII)", "G3"),
+            # グレード表記なし
+            ("3歳未勝利", ""),
+            ("テストステークス(L)", ""),
+        ],
+    )
+    def test_normalize_grade(self, race_name, expected):
+        from app.scrapers.netkeiba import _normalize_grade
+
+        assert _normalize_grade(race_name) == expected
+
+    def test_ascii_grade_longest_match_wins(self):
+        """(GIII) が "GI" に先食いされず G3 になること。"""
+        from app.scrapers.constants import GRADE_PATTERN
+
+        assert GRADE_PATTERN.search("第41回テストダート記念(GIII)").group(1) == "GIII"
+        assert GRADE_PATTERN.search("第26回テスト(JGIII)").group(1) == "JGIII"
+
+
+# ---------------------------------------------------------------------------
+# NetkeibaScraper.fetch_race_result
+# ---------------------------------------------------------------------------
+
+
+class TestNetkeibaFetchRaceResult:
+    """NetkeibaScraper.fetch_race_result() のHTMLパーステスト。"""
+
+    RACE_ID = "202405021212"
+
+    async def _fetch(self, html: str, race_id: str | None = None) -> dict:
+        scraper = NetkeibaScraper()
+        with patch.object(scraper, "fetch", new=AsyncMock(return_value=html)):
+            return await scraper.fetch_race_result(race_id or self.RACE_ID)
+
+    @pytest.mark.asyncio
+    async def test_race_info_extraction(self):
+        """レース情報（名前・ASCIIグレード・日付・会場・コース・天候・馬場）。"""
+        parsed = await self._fetch(RACE_RESULT_HTML)
+        race = parsed["race"]
+        assert race["race_id"] == self.RACE_ID
+        assert race["name"] == "第91回東京優駿(GI)"
+        assert race["grade"] == "G1"
+        assert race["date"] == "2024-05-26"
+        assert race["venue"] == "東京"  # race_idのインデックス4-5 = "05"
+        assert race["course_type"] == "芝"
+        assert race["distance"] == 2400
+        assert race["weather"] == "晴"
+        assert race["track_condition"] == "良"
+
+    @pytest.mark.asyncio
+    async def test_results_parsing_with_ids_and_types(self):
+        """25列テーブルからID抽出・型変換が正しく行われること。"""
+        parsed = await self._fetch(RACE_RESULT_HTML)
+        results = parsed["results"]
+        # 取消行を除いた2頭
+        assert len(results) == 2
+
+        winner = results[0]
+        assert winner["horse_id"] == "2021105165"
+        assert winner["horse_name"] == "テスト馬A"
+        assert winner["horse_number"] == 10
+        assert winner["finish_position"] == 1
+        assert winner["time"] == "2:24.3"
+        # 1着は着差が空 → None
+        assert winner["margin"] is None
+        assert winner["last_3f"] == pytest.approx(33.5)
+        assert winner["jockey_id"] == "01167"
+        assert winner["jockey_name"] == "テスト騎手A"
+        # 調教師セルの [西] はリンクテキストに含まれない
+        assert winner["trainer_id"] == "01126"
+        assert winner["trainer_name"] == "テスト調教師A"
+
+    @pytest.mark.asyncio
+    async def test_diary_snap_cut_wrapped_cell(self):
+        """馬名セルが <diary_snap_cut> に包まれていてもIDが取れること。"""
+        parsed = await self._fetch(RACE_RESULT_HTML)
+        runner_up = parsed["results"][1]
+        assert runner_up["horse_id"] == "2021104976"
+        assert runner_up["horse_name"] == "テスト馬B"
+        assert runner_up["horse_number"] == 15
+        assert runner_up["margin"] == "クビ"
+
+    @pytest.mark.asyncio
+    async def test_scratched_row_skipped(self):
+        """着順が非数値（取消/中止/除外）の行がスキップされること。"""
+        parsed = await self._fetch(RACE_RESULT_HTML)
+        horse_ids = [row["horse_id"] for row in parsed["results"]]
+        assert "2021109999" not in horse_ids
+
+    @pytest.mark.asyncio
+    async def test_payouts_parsing(self):
+        """8券種すべてがthのclassで判定され、金額のカンマが除去されること。"""
+        parsed = await self._fetch(RACE_RESULT_HTML)
+        payouts = parsed["payouts"]
+
+        # 単勝1 + 複勝3 + 枠連1 + 馬連1 + ワイド3 + 馬単1 + 三連複1 + 三連単1
+        assert len(payouts) == 12
+        assert {p["bet_type"] for p in payouts} == {
+            "単勝",
+            "複勝",
+            "枠連",
+            "馬連",
+            "ワイド",
+            "馬単",
+            "三連複",
+            "三連単",
+        }
+
+        win = next(p for p in payouts if p["bet_type"] == "単勝")
+        assert win == {"bet_type": "単勝", "combination": "10", "amount": 4660}
+
+        # 順不同系は空白除去のみ（区切りは原文のまま）
+        quinella = next(p for p in payouts if p["bet_type"] == "馬連")
+        assert quinella["combination"] == "10-15"
+        assert quinella["amount"] == 14220
+
+        # 着順固定系の区切り（U+2192）はそのまま
+        trifecta = next(p for p in payouts if p["bet_type"] == "三連単")
+        assert trifecta["combination"] == "10→15→13"
+        assert trifecta["amount"] == 212300
+
+    @pytest.mark.asyncio
+    async def test_place_payouts_split_by_br(self):
+        """複勝の複数払戻が<br/>で3件に分割されること。"""
+        parsed = await self._fetch(RACE_RESULT_HTML)
+        place_payouts = [p for p in parsed["payouts"] if p["bet_type"] == "複勝"]
+        assert [(p["combination"], p["amount"]) for p in place_payouts] == [
+            ("10", 1020),
+            ("15", 240),
+            ("13", 210),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_dirt_track_condition_key(self):
+        """ダートは馬場キーが「ダート」でも track_condition が取れること。"""
+        parsed = await self._fetch(RACE_RESULT_DIRT_HTML, "202405020811")
+        race = parsed["race"]
+        assert race["course_type"] == "ダート"
+        assert race["distance"] == 1600
+        assert race["track_condition"] == "稍重"
+        assert race["weather"] == "曇"
+        assert race["grade"] == "G3"
+
+    @pytest.mark.asyncio
+    async def test_jump_ascii_grade_and_course(self):
+        """障害の (JGIII) が G3 に、コース「障芝」が芝に正規化されること。"""
+        parsed = await self._fetch(RACE_RESULT_JUMP_HTML, "202406030609")
+        race = parsed["race"]
+        assert race["grade"] == "G3"
+        assert race["course_type"] == "芝"
+        assert race["distance"] == 3000
+        # 上りが空欄なら None
+        assert parsed["results"][0]["last_3f"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_result_table_returns_empty_dict(self):
+        """着順テーブルが無い場合は空dictを返すこと。"""
+        parsed = await self._fetch(RACE_RESULT_NO_TABLE_HTML)
+        assert parsed == {}
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_returns_empty_dict(self):
+        """HTTPエラー時に空dictを返すこと。"""
+        import httpx
+
+        scraper = NetkeibaScraper()
+        with patch.object(
+            scraper, "fetch", new=AsyncMock(side_effect=httpx.HTTPError("404"))
+        ):
+            parsed = await scraper.fetch_race_result("999999999999")
+        assert parsed == {}
