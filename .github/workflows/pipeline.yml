@@ -1,0 +1,120 @@
+name: データパイプライン
+
+on:
+  schedule:
+    - cron: "0 21 * * 5" # 土曜 6:00 JST — 予想生成 (fetch)
+    - cron: "0 21 * * 0" # 月曜 6:00 JST — 答え合わせ (verify)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 実行モード
+        type: choice
+        options: [fetch, verify, backfill, export-only]
+        default: fetch
+      backfill_years:
+        description: backfill の遡り年数
+        default: "5"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "db/**"
+
+# データ更新とデプロイを直列化(予想と答え合わせの同時実行を防ぐ)
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      DATABASE_URL: sqlite:///${{ github.workspace }}/db/keiba.sqlite3
+      OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 実行モードを決定
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "mode=export-only" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 21 * * 5" ]; then
+            echo "mode=fetch" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=verify" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: backend 依存をインストール
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: データ収集を実行
+        if: steps.mode.outputs.mode != 'export-only'
+        working-directory: backend
+        run: |
+          case "${{ steps.mode.outputs.mode }}" in
+            fetch)    python -m app.cli fetch ;;
+            verify)   python -m app.cli verify --days 8 ;;
+            backfill) python -m app.cli backfill --years "${{ inputs.backfill_years || '5' }}" ;;
+          esac
+
+      - name: DB の変更をコミット
+        if: steps.mode.outputs.mode != 'export-only'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/keiba.sqlite3
+          if git diff --cached --quiet; then
+            echo "DB に変更なし"
+          else
+            git commit -m "data: ${{ steps.mode.outputs.mode }} によるデータ更新"
+            git pull --rebase origin main
+            git push origin main
+          fi
+
+      - name: 静的データを書き出し
+        working-directory: backend
+        run: python -m app.cli export --out ../frontend/public/data
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: フロントエンドをビルド
+        working-directory: frontend
+        env:
+          VITE_DATA_MODE: static
+          VITE_BASE: /keiba-predictor/
+        run: |
+          npm ci
+          npm run build
+          cp dist/index.html dist/404.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      - name: GitHub Pages へデプロイ
+        id: deploy
+        uses: actions/deploy-pages@v4
