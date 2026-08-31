@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import fetch, horses, races
+from app.routers import fetch, horses, races, stats
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -32,6 +32,7 @@ app.add_middleware(
 app.include_router(races.router)
 app.include_router(horses.router)
 app.include_router(fetch.router)
+app.include_router(stats.router)
 
 
 @app.get("/api/health")
