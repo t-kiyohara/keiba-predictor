@@ -1,270 +1,205 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Horse, RaceResult } from '../types';
-import { useApi } from '../hooks/useApi';
-import { TRACK_CONDITION_CLASS, RANK_BADGE } from '../constants/badge';
+import { FETCH_ERROR_MESSAGE, useResource } from '../hooks/useApi';
+import { formatPaperDate, gradeBadgeClass } from '../constants/paper';
 
 function calcAge(birthday: string | null): string {
-  if (!birthday) return '-';
-  const birth = new Date(birthday);
+  if (!birthday) return '–';
+  const [year, month, day] = birthday.split('-').map(Number);
+  if (!year || !month || !day) return '–';
   const today = new Date();
-  let age = today.getFullYear() - birth.getFullYear();
-  const m = today.getMonth() - birth.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  let age = today.getFullYear() - year;
+  if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) {
+    age -= 1;
+  }
   return `${age}歳`;
 }
 
-/** 直近N走の着順ドットチャート */
-function FinishDotChart({ results }: { results: RaceResult[] }) {
-  const recent = results.slice(0, 5);
-  if (recent.length === 0) return <span className="text-xs text-text-disabled">-</span>;
-
-  return (
-    <div className="flex items-end gap-1 h-6">
-      {recent.map((r, i) => {
-        const pos = r.finish_position;
-        const color =
-          pos === 1 ? 'bg-yellow-400' :
-          pos !== null && pos <= 3 ? 'bg-primary' :
-          pos !== null && pos <= 5 ? 'bg-primary/60' :
-          'bg-stone-02';
-        const heightPx = pos === null ? 4 : Math.max(4, Math.round(24 - (pos - 1) * 3));
-        return (
-          <div
-            key={i}
-            title={pos !== null ? `${pos}着` : '不明'}
-            className={`w-2.5 rounded-sm transition-all ${color}`}
-            style={{ height: `${heightPx}px` }}
-          />
-        );
-      })}
-    </div>
-  );
+/** 着順1–3着は墨太字、1着のみ朱(DESIGN.md §5-4) */
+function finishClass(finishPosition: number | null): string {
+  if (finishPosition === 1) return 'font-bold text-shu';
+  if (finishPosition !== null && finishPosition <= 3) return 'font-bold text-ink';
+  return 'text-ink-weak';
 }
 
-/** 血統ツリー（簡易版） */
-function PedigreeTree({ horse }: { horse: Horse }) {
-  const hasPedigree = horse.sire || horse.dam || horse.dam_sire;
-  if (!hasPedigree) {
-    return <p className="text-sm text-text-disabled">血統情報がありません</p>;
+function Pedigree({ horse }: { horse: Horse }) {
+  const lines: [string, string | null][] = [
+    ['父', horse.sire],
+    ['母', horse.dam],
+    ['母父', horse.dam_sire],
+  ];
+  if (lines.every(([, name]) => !name)) {
+    return <p className="text-data text-ink-weak">血統情報は未取得です</p>;
   }
 
   return (
-    <div className="flex items-stretch gap-0">
-      {/* 本馬 */}
-      <div className="flex items-center">
-        <div className="bg-primary/20 border border-primary/40 rounded-lg px-4 py-3 text-center min-w-[120px]">
-          <p className="text-xs text-text-grey mb-0.5">本馬</p>
-          <p className="font-bold text-sm text-text-black">{horse.name}</p>
+    <dl className="max-w-md text-data">
+      {lines.map(([label, name]) => (
+        <div key={label} className="rule-b flex gap-3 py-1">
+          <dt className="w-12 shrink-0 text-ink-weak">{label}</dt>
+          <dd className="text-ink">{name ?? '–'}</dd>
         </div>
-      </div>
-
-      {/* 接続線 */}
-      <div className="flex flex-col justify-center px-2">
-        <div className="border-l-2 border-t-2 border-border h-8 w-4 rounded-tl-md"></div>
-        <div className="border-l-2 border-b-2 border-border h-8 w-4 rounded-bl-md"></div>
-      </div>
-
-      {/* 父・母 */}
-      <div className="flex flex-col gap-2 justify-center">
-        {horse.sire && (
-          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2 text-center min-w-[120px]">
-            <p className="text-xs text-text-grey mb-0.5">父</p>
-            <p className="font-semibold text-sm text-text-black">{horse.sire}</p>
-          </div>
-        )}
-        {horse.dam && (
-          <div className="bg-pink-500/10 border border-pink-500/30 rounded-lg px-4 py-2 text-center min-w-[120px]">
-            <p className="text-xs text-text-grey mb-0.5">母</p>
-            <p className="font-semibold text-sm text-text-black">{horse.dam}</p>
-            {horse.dam_sire && (
-              <p className="text-xs text-text-disabled mt-0.5">（母父: {horse.dam_sire}）</p>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+      ))}
+    </dl>
   );
 }
 
 export default function HorseDetail() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const [horse, setHorse] = useState<Horse | null>(null);
-  const [results, setResults] = useState<RaceResult[]>([]);
-  const { fetchApi, loading, error, abort } = useApi();
+  const horseResource = useResource<Horse>(id ? `/horses/${id}` : null);
+  const resultResource = useResource<RaceResult[]>(id ? `/horses/${id}/results` : null);
 
-  useEffect(() => {
-    if (!id) return;
-
-    const loadData = async () => {
-      const [horseData, resultsData] = await Promise.all([
-        fetchApi<Horse>(`/horses/${id}`),
-        fetchApi<RaceResult[]>(`/horses/${id}/results`),
-      ]);
-      if (horseData) setHorse(horseData);
-      if (resultsData) setResults(resultsData.slice(0, 10));
-    };
-
-    loadData();
-    return () => abort();
-  }, [id, fetchApi, abort]);
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-2">
-          <div className="skeleton h-8 w-20"></div>
-          <div className="skeleton h-4 w-4"></div>
-          <div className="skeleton h-4 w-32"></div>
-        </div>
-        <div className="card-smarthr">
-          <div className="p-4 space-y-4">
-            <div className="skeleton h-8 w-48"></div>
-            <div className="grid grid-cols-2 tablet:grid-cols-3 gap-4">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="space-y-1">
-                  <div className="skeleton h-3 w-12"></div>
-                  <div className="skeleton h-5 w-24"></div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="alert-error" role="alert">
-        <span>{error}</span>
-      </div>
-    );
-  }
-
-  if (!horse) {
-    return (
-      <div className="alert-warning" role="alert">
-        <span>馬の情報が見つかりません。</span>
-      </div>
-    );
-  }
+  const horse = horseResource.value;
+  const results = resultResource.value ?? [];
+  // 静的データ契約のみが持つ列(グレード・着差・騎手)。API モードでは列自体を出さない
+  const hasRaceDetail = results.some(
+    (result) => result.grade || result.margin || result.jockey_name,
+  );
 
   return (
-    <div className="space-y-6">
-      {/* パンくずリスト風ナビゲーション */}
-      <div className="flex items-center gap-2 text-sm flex-wrap">
-        <button
-          className="btn-ghost btn-sm"
-          onClick={() => navigate(-1)}
-        >
-          ← 戻る
-        </button>
-        <span className="text-text-disabled">/</span>
-        <Link to="/" className="text-text-grey hover:text-text-black transition-colors">
-          ダッシュボード
+    <div>
+      <p className="mb-2 text-caption">
+        <Link to="/" className="link-ai">
+          番組表へ戻る
         </Link>
-        <span className="text-text-disabled">/</span>
-        <span className="font-semibold text-text-black">{horse.name}</span>
+      </p>
+
+      {/* 馬の見出し欄 */}
+      <div className="rule-heavy pb-2">
+        {horseResource.status === 'loading' && (
+          <p className="py-2 text-data text-ink-weak">馬の情報を読み込んでいます</p>
+        )}
+        {horseResource.status === 'error' && (
+          <p role="alert" className="py-2 text-data text-shu">
+            馬の情報を取得できませんでした。時間をおいて再実行してください
+          </p>
+        )}
+        {horse && (
+          <>
+            <h1 className="font-mincho text-race-name font-bold text-ink">{horse.name}</h1>
+            <p className="mt-0.5 text-data text-ink-weak">
+              {horse.sex ?? '性別不明'} ・ {calcAge(horse.birthday)} ・ 生年月日{' '}
+              <span className="tabular-nums">{horse.birthday ?? '不明'}</span>
+            </p>
+          </>
+        )}
       </div>
 
-      {/* 馬基本情報 */}
-      <div className="card-smarthr">
-        <div className="p-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-text-black">🐴 {horse.name}</h1>
-            {horse.sex && (
-              <span className="badge-smarthr border border-border text-text-grey">{horse.sex}</span>
-            )}
-          </div>
-          <div className="grid grid-cols-2 tablet:grid-cols-3 gap-4 mt-4">
-            <div>
-              <p className="text-sm text-text-grey">性別</p>
-              <p className="font-semibold text-text-black">{horse.sex ?? '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-text-grey">年齢</p>
-              <p className="font-semibold text-text-black">{calcAge(horse.birthday)}</p>
-            </div>
-            <div>
-              <p className="text-sm text-text-grey">生年月日</p>
-              <p className="font-semibold text-text-black">{horse.birthday ?? '-'}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* 血統欄 */}
+      {horse && (
+        <section className="rule-b py-3">
+          <h2 className="mb-2 font-mincho text-heading font-bold text-ink">血統</h2>
+          <Pedigree horse={horse} />
+        </section>
+      )}
 
-      {/* 血統ツリー */}
-      <div className="card-smarthr">
-        <div className="p-4">
-          <h2 className="text-xl font-bold mb-4 text-text-black">血統</h2>
+      {/* 戦績欄 */}
+      <section className="py-3">
+        <h2 className="mb-2 font-mincho text-heading font-bold text-ink">戦績</h2>
+
+        {resultResource.status === 'loading' && (
+          <p className="text-data text-ink-weak">戦績を読み込んでいます</p>
+        )}
+        {resultResource.status === 'error' && (
+          <p role="alert" className="text-data text-shu">
+            {FETCH_ERROR_MESSAGE}
+          </p>
+        )}
+        {resultResource.status === 'ready' && results.length === 0 && (
+          <p className="text-data text-ink-weak">戦績はまだ取得できていません</p>
+        )}
+
+        {results.length > 0 && (
           <div className="overflow-x-auto">
-            <PedigreeTree horse={horse} />
-          </div>
-        </div>
-      </div>
-
-      {/* 過去成績 */}
-      <div>
-        <h2 className="text-xl font-bold mb-3 text-text-black">過去成績（直近10走）</h2>
-        {results.length > 0 ? (
-          <div className="card-smarthr overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
+            <table className="w-full border-collapse text-data">
+              <caption className="sr-only">過去の戦績</caption>
               <thead>
-                <tr className="bg-stone-02">
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey whitespace-nowrap">日付</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">レース名</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">競馬場</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">距離</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">コース</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">馬場</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">着順</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">タイム</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">上り3F</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-text-grey">直近トレンド</th>
+                <tr className="bg-paper-inset text-left text-caption text-ink-weak">
+                  <th scope="col" className="whitespace-nowrap px-2 py-1 font-medium">
+                    日付
+                  </th>
+                  <th scope="col" className="px-2 py-1 font-medium">
+                    レース
+                  </th>
+                  <th scope="col" className="px-2 py-1 font-medium">
+                    競馬場
+                  </th>
+                  <th scope="col" className="px-2 py-1 font-medium">
+                    コース
+                  </th>
+                  <th scope="col" className="px-2 py-1 font-medium">
+                    馬場
+                  </th>
+                  {hasRaceDetail && (
+                    <th scope="col" className="px-2 py-1 font-medium">
+                      騎手
+                    </th>
+                  )}
+                  <th scope="col" className="px-2 py-1 text-right font-medium">
+                    着順
+                  </th>
+                  {hasRaceDetail && (
+                    <th scope="col" className="px-2 py-1 text-right font-medium">
+                      着差
+                    </th>
+                  )}
+                  <th scope="col" className="px-2 py-1 text-right font-medium">
+                    タイム
+                  </th>
+                  <th scope="col" className="px-2 py-1 text-right font-medium">
+                    上がり3F
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {results.map((result, idx) => (
-                  <tr key={`${result.race_id}-${result.date}`} className="border-t border-border hover:bg-over-bg transition-colors">
-                    <td className="px-3 py-2 whitespace-nowrap text-text-black">{result.date}</td>
-                    <td className="px-3 py-2 text-text-black">{result.race_name}</td>
-                    <td className="px-3 py-2 text-text-black">{result.venue}</td>
-                    <td className="px-3 py-2 text-text-black">{result.distance}m</td>
-                    <td className="px-3 py-2 text-text-black">{result.course_type}</td>
-                    <td className="px-3 py-2">
-                      <span className={TRACK_CONDITION_CLASS[result.track_condition] ?? 'badge-smarthr bg-stone-02 text-stone-04'}>
-                        {result.track_condition}
-                      </span>
+                {results.map((result) => (
+                  <tr
+                    key={`${result.race_id}-${result.date}`}
+                    className="border-t border-rule transition-colors hover:bg-paper-inset"
+                  >
+                    <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-ink-weak">
+                      {formatPaperDate(result.date)}
                     </td>
-                    <td className="px-3 py-2">
-                      {result.finish_position !== null ? (
-                        <span className={RANK_BADGE[result.finish_position] ?? 'badge-smarthr bg-stone-02 text-stone-04'}>
-                          {result.finish_position}着
+                    <td className="px-2 py-1.5">
+                      <span className="font-mincho font-bold text-ink">{result.race_name}</span>
+                      {result.grade && (
+                        <span className={`ml-1.5 ${gradeBadgeClass(result.grade)}`}>
+                          {result.grade}
                         </span>
-                      ) : '-'}
-                    </td>
-                    <td className="px-3 py-2 text-text-black">{result.time ?? '-'}</td>
-                    <td className="px-3 py-2 text-text-black">{result.last_3f !== null ? result.last_3f.toFixed(1) : '-'}</td>
-                    <td className="px-3 py-2">
-                      {idx === 0 ? (
-                        <FinishDotChart results={results} />
-                      ) : (
-                        <span className="text-xs text-text-disabled">-</span>
                       )}
+                    </td>
+                    <td className="px-2 py-1.5 text-ink">{result.venue}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-ink">
+                      {result.course_type}
+                      <span className="tabular-nums">{result.distance}</span>m
+                    </td>
+                    <td className="px-2 py-1.5 text-ink">{result.track_condition ?? '–'}</td>
+                    {hasRaceDetail && (
+                      <td className="px-2 py-1.5 text-ink-weak">{result.jockey_name ?? '–'}</td>
+                    )}
+                    <td
+                      className={`px-2 py-1.5 text-right tabular-nums ${finishClass(result.finish_position)}`}
+                    >
+                      {result.finish_position !== null ? `${result.finish_position}着` : '–'}
+                    </td>
+                    {hasRaceDetail && (
+                      <td className="px-2 py-1.5 text-right text-ink-weak">
+                        {result.margin ?? '–'}
+                      </td>
+                    )}
+                    <td className="px-2 py-1.5 text-right tabular-nums text-ink">
+                      {result.time ?? '–'}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-ink">
+                      {result.last_3f !== null ? result.last_3f.toFixed(1) : '–'}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="alert-info" role="status">
-            <span>過去の成績データがありません。</span>
-          </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

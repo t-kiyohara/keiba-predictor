@@ -1,56 +1,64 @@
 /** @type {import('tailwindcss').Config} */
+/* DESIGN.md「重賞スコープ」§2/§3/§9 のトークン。ライト固定・角丸なし・影なし。
+   色の定義元は src/index.css の :root(CSS 変数)。ここはその参照に留める。 */
+const colors = {
+  paper: 'var(--paper)',
+  'paper-inset': 'var(--paper-inset)',
+  ink: 'var(--ink)',
+  'ink-weak': 'var(--ink-weak)',
+  rule: 'var(--rule)',
+  shu: 'var(--shu)',
+  ai: 'var(--ai)',
+  white: '#FFFFFF',
+  transparent: 'transparent',
+  current: 'currentColor',
+};
+
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
-    screens: {
-      sp: { max: '599px' },
-      tablet: { min: '600px', max: '959px' },
-      desktop: '960px',
-    },
+    // 地の色数を最小限に保つため、パレットは全面差し替え(Tailwind 既定色は使わない)
+    colors,
+    borderColor: { ...colors, DEFAULT: colors.rule },
+    // 角丸は使わない(DESIGN.md §1)
+    borderRadius: { none: '0' },
     extend: {
-      colors: {
-        primary: '#0077c7',
-        danger: '#e01e5a',
-        warning: '#ffcc17',
-        link: '#0071c1',
-        orange: '#ff9900',
-        'text-black': '#23221e',
-        'text-grey': '#706d65',
-        'text-disabled': '#c1bdb7',
-        'stone-01': '#f8f7f6',
-        'stone-02': '#edebe8',
-        'stone-03': '#aaa69f',
-        'stone-04': '#4e4c49',
-        border: '#d6d3d0',
-        surface: '#ffffff',
-        'over-bg': '#f2f1f0',
+      screens: {
+        // 馬柱の縦組み→横テーブルのフォールバック境界(DESIGN.md §4)
+        sp: { max: '767px' },
       },
       fontFamily: {
-        sans: [
-          'AdjustedYuGothic',
-          '"Yu Gothic"',
-          'YuGothic',
-          '"Hiragino Sans"',
-          'sans-serif',
-        ],
+        // 題字・レース名・日付見出しのみ明朝
+        mincho: ['"Shippori Mincho B1"', 'serif'],
+        sans: ['"IBM Plex Sans JP"', '"Hiragino Sans"', 'sans-serif'],
       },
       fontSize: {
-        xxs: ['0.667rem', { lineHeight: '1.5' }],
-        xs: ['0.75rem', { lineHeight: '1.5' }],
-        sm: ['0.857rem', { lineHeight: '1.5' }],
-        base: ['1rem', { lineHeight: '1.5' }],
-        lg: ['1.2rem', { lineHeight: '1.25' }],
-        xl: ['1.5rem', { lineHeight: '1.25' }],
-        '2xl': ['2rem', { lineHeight: '1.25' }],
+        // DESIGN.md §3 のスケール
+        caption: ['12px', { lineHeight: '1.5' }],
+        data: ['13px', { lineHeight: '1.5' }],
+        body: ['14px', { lineHeight: '1.7' }],
+        heading: ['18px', { lineHeight: '1.4' }],
+        'race-name': ['26px', { lineHeight: '1.3' }],
+        logo: ['28px', { lineHeight: '1.2' }],
+        figure: ['34px', { lineHeight: '1.1' }],
       },
-      borderRadius: {
-        DEFAULT: '6px',
+      maxWidth: {
+        page: '1080px',
       },
-      boxShadow: {
-        sm: '0 2px 4px rgba(0,0,0,0.1)',
-        md: '0 4px 8px rgba(0,0,0,0.15)',
+      transitionDuration: {
+        // hover の背景遷移のみ(DESIGN.md §6)
+        DEFAULT: '100ms',
       },
     },
+  },
+  corePlugins: {
+    // 紙面に影は使わない(DESIGN.md §1)
+    boxShadow: false,
+    boxShadowColor: false,
+    ringWidth: false,
+    ringColor: false,
+    ringOffsetWidth: false,
+    ringOffsetColor: false,
   },
   plugins: [],
 };

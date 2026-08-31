@@ -1,239 +1,252 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Race, Prediction } from '../types';
-import { useApi } from '../hooks/useApi';
-import ScoreTable from '../components/ScoreTable';
-import ScoreChart from '../components/ScoreChart';
-import WeatherBadge from '../components/WeatherBadge';
-import { RANK_BADGE, GRADE_CLASS } from '../constants/badge';
+import { useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { Entry, Prediction, Race } from '../types';
+import { FETCH_ERROR_MESSAGE, useResource } from '../hooks/useApi';
+import Umabashira from '../components/Umabashira';
+import {
+  formatPaperDateFull,
+  gradeBadgeClass,
+  markColorClass,
+  markForRank,
+  MARK_LEGEND,
+  raceNumberFromId,
+  weatherGlyph,
+} from '../constants/paper';
 
-// トップ3カードの背景グラデーション
-const RANK_GRADIENT: Record<number, string> = {
-  1: 'bg-gradient-to-br from-yellow-500/30 via-amber-400/20 to-yellow-600/10 border border-yellow-500/30',
-  2: 'bg-gradient-to-br from-slate-400/30 via-gray-300/20 to-slate-500/10 border border-slate-400/30',
-  3: 'bg-gradient-to-br from-amber-700/30 via-orange-600/20 to-amber-800/10 border border-amber-700/30',
-};
+/** 選択馬の8ファクター内訳。Chart.js レーダーではなく CSS 横バー(DESIGN.md §5-2) */
+function FactorBars({ prediction }: { prediction: Prediction }) {
+  const factors = Object.entries(prediction.factor_scores);
 
-const RANK_LABEL: Record<number, string> = {
-  1: '🥇 1着予想',
-  2: '🥈 2着予想',
-  3: '🥉 3着予想',
-};
+  return (
+    <div className="space-y-1.5">
+      {factors.map(([key, factor]) => (
+        <div
+          key={key}
+          className="grid grid-cols-[7rem_1fr_auto] items-center gap-x-3 sp:grid-cols-[5.5rem_1fr_auto]"
+        >
+          <span className="text-data text-ink">{factor.label}</span>
+          <span className="h-2 w-full bg-rule" aria-hidden="true">
+            <span
+              className="block h-full bg-ink"
+              style={{ width: `${Math.min(100, Math.max(0, factor.score))}%` }}
+            />
+          </span>
+          <span className="text-data tabular-nums text-ink">
+            {factor.score.toFixed(1)}
+            <span className="ml-1.5 text-caption text-ink-weak">
+              寄与 {factor.weighted.toFixed(1)}
+            </span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-const RANK_SCORE_COLOR: Record<number, string> = {
-  1: 'text-yellow-600',
-  2: 'text-slate-500',
-  3: 'text-amber-700',
-};
+/** ◎○▲△の馬と総合スコアの順位表(DESIGN.md §5-2) */
+function MarkRanking({
+  predictions,
+  onSelect,
+}: {
+  predictions: Prediction[];
+  onSelect: (horseId: string) => void;
+}) {
+  const marked = predictions.filter((prediction) => markForRank(prediction.rank) !== null);
+  if (marked.length === 0) return null;
+
+  return (
+    <table className="w-full max-w-md border-collapse text-data">
+      <caption className="sr-only">本紙の印と総合スコア</caption>
+      <thead>
+        <tr className="bg-paper-inset text-left text-caption text-ink-weak">
+          <th scope="col" className="px-2 py-1 font-medium">
+            印
+          </th>
+          <th scope="col" className="px-2 py-1 font-medium">
+            馬名
+          </th>
+          <th scope="col" className="px-2 py-1 text-right font-medium">
+            総合スコア
+          </th>
+          <th scope="col" className="px-2 py-1 text-right font-medium">
+            戦績
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {marked.map((prediction) => {
+          const mark = markForRank(prediction.rank);
+          return (
+            <tr key={prediction.horse_id} className="border-t border-rule">
+              <td className="px-2 py-1.5">
+                <span
+                  className={`mark ${markColorClass(prediction.rank)}`}
+                  role="img"
+                  aria-label={mark?.label ?? ''}
+                >
+                  {mark?.symbol}
+                </span>
+              </td>
+              <td className="px-2 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => onSelect(prediction.horse_id)}
+                  className="text-left font-mincho font-bold text-ink"
+                >
+                  {prediction.horse_name}
+                </button>
+              </td>
+              <td className="px-2 py-1.5 text-right font-bold tabular-nums">
+                {prediction.total_score.toFixed(1)}
+              </td>
+              <td className="px-2 py-1.5 text-right">
+                <Link to={`/horse/${prediction.horse_id}`} className="link-ai text-caption">
+                  見る
+                </Link>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
 
 export default function RaceDetail() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const [race, setRace] = useState<Race | null>(null);
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [selectedPrediction, setSelectedPrediction] = useState<Prediction | null>(null);
-  const { fetchApi, loading, error, abort } = useApi();
+  const [selectedHorseId, setSelectedHorseId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!id) return;
+  // 欄ごとに独立して読む。片方が失敗しても他の欄は描画する
+  const raceResource = useResource<Race>(id ? `/races/${id}` : null);
+  const predictionResource = useResource<Prediction[]>(id ? `/races/${id}/predictions` : null);
+  // 出走馬(枠色・馬番・オッズ・騎手)。未実装のバックエンドでは 404 になるので欠損扱い
+  const entryResource = useResource<Entry[]>(id ? `/races/${id}/entries` : null);
 
-    const loadData = async () => {
-      const [raceData, predData] = await Promise.all([
-        fetchApi<Race>(`/races/${id}`),
-        fetchApi<Prediction[]>(`/races/${id}/predictions`),
-      ]);
-      if (raceData) setRace(raceData);
-      if (predData) {
-        setPredictions(predData);
-        const top = predData.find((p) => p.rank === 1) ?? null;
-        setSelectedPrediction(top);
-      }
-    };
+  const race = raceResource.value;
+  const predictions = predictionResource.value ?? [];
+  const entries = entryResource.value ?? [];
 
-    loadData();
-    return () => abort();
-  }, [id, fetchApi, abort]);
+  const selected =
+    predictions.find((prediction) => prediction.horse_id === selectedHorseId) ??
+    predictions.find((prediction) => prediction.rank === 1) ??
+    null;
 
-  const handleHorseSelect = (horseId: string) => {
-    const pred = predictions.find((p) => p.horse_id === horseId) ?? null;
-    setSelectedPrediction(pred);
-  };
-
-  // ローディング中スケルトン
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="skeleton h-8 w-32"></div>
-        <div className="card-smarthr">
-          <div className="p-4 space-y-4">
-            <div className="skeleton h-8 w-64"></div>
-            <div className="grid grid-cols-2 desktop:grid-cols-4 gap-4">
-              {[...Array(4)].map((_, i) => (
-                <div key={i} className="space-y-2">
-                  <div className="skeleton h-3 w-16"></div>
-                  <div className="skeleton h-5 w-24"></div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 tablet:grid-cols-3 gap-4">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="card-smarthr">
-              <div className="p-4 space-y-3">
-                <div className="skeleton h-5 w-20"></div>
-                <div className="skeleton h-7 w-32"></div>
-                <div className="skeleton h-4 w-28"></div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="alert-error" role="alert">
-        <span>{error}</span>
-      </div>
-    );
-  }
-
-  if (!race) {
-    return (
-      <div className="alert-warning" role="alert">
-        <span>レース情報が見つかりません。</span>
-      </div>
-    );
-  }
-
-  const top3 = predictions.filter((p) => p.rank <= 3);
+  const glyph = race ? weatherGlyph(race.weather) : null;
+  const raceNumber = race ? raceNumberFromId(race.id) : null;
 
   return (
-    <div className="space-y-6">
-      {/* パンくずリスト風ナビゲーション */}
-      <div className="flex items-center gap-2 text-sm">
-        <button
-          className="btn-ghost btn-sm"
-          onClick={() => navigate('/')}
-        >
-          ← 一覧に戻る
-        </button>
-        <span className="text-text-disabled">/</span>
-        <span className="text-text-grey">ダッシュボード</span>
-        <span className="text-text-disabled">/</span>
-        <span className="font-semibold text-text-black truncate max-w-xs">{race.name}</span>
-      </div>
+    <div>
+      <p className="mb-2 text-caption">
+        <Link to="/" className="link-ai">
+          番組表へ戻る
+        </Link>
+      </p>
 
-      {/* レース基本情報 */}
-      <div className="card-smarthr">
-        <div className="p-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold text-text-black">{race.name}</h1>
-            {race.grade && (
-              <span className={GRADE_CLASS[race.grade] ?? 'badge-smarthr bg-stone-02 text-stone-04'}>
-                {race.grade}
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-2 desktop:grid-cols-4 gap-4 mt-4">
-            <div>
-              <p className="text-sm text-text-grey">日付</p>
-              <p className="font-semibold text-text-black">{race.date}</p>
+      {/* レース見出し欄 */}
+      <div className="rule-heavy pb-2">
+        {raceResource.status === 'loading' && (
+          <p className="py-2 text-data text-ink-weak">レース情報を読み込んでいます</p>
+        )}
+        {raceResource.status === 'error' && (
+          <p role="alert" className="py-2 text-data text-shu">
+            レース情報を取得できませんでした。時間をおいて再実行してください
+          </p>
+        )}
+        {race && (
+          <>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <h1 className="flex flex-wrap items-center gap-2">
+                <span className={gradeBadgeClass(race.grade)}>{race.grade}</span>
+                <span className="font-mincho text-race-name font-bold text-ink">
+                  {race.name}
+                </span>
+              </h1>
+              <p className="text-data text-ink-weak">
+                {formatPaperDateFull(race.date)} {race.venue}
+                {raceNumber ? ` ${raceNumber}` : ''}
+              </p>
             </div>
-            <div>
-              <p className="text-sm text-text-grey">競馬場</p>
-              <p className="font-semibold text-text-black">{race.venue}</p>
-            </div>
-            <div>
-              <p className="text-sm text-text-grey">距離・コース</p>
-              <p className="font-semibold text-text-black">{race.course_type} {race.distance}m</p>
-            </div>
-            <div>
-              <p className="text-sm text-text-grey">天気・馬場</p>
-              <WeatherBadge weather={race.weather} trackCondition={race.track_condition} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* トップ3ハイライト */}
-      {top3.length > 0 && (
-        <div>
-          <h2 className="text-xl font-bold mb-3 text-text-black">予想上位馬</h2>
-          <div className="grid grid-cols-1 tablet:grid-cols-3 gap-4">
-            {top3.map((pred) => (
-              <div
-                key={pred.horse_id}
-                className={`rounded-lg cursor-pointer hover:scale-[1.02] transition-all duration-200 ${RANK_GRADIENT[pred.rank] ?? 'card-smarthr'}`}
-                onClick={() => setSelectedPrediction(pred)}
-              >
-                <div className="p-4">
-                  <div className="flex items-center gap-2">
-                    <span className={RANK_BADGE[pred.rank] ?? 'badge-smarthr bg-stone-02 text-stone-04'}>
-                      {RANK_LABEL[pred.rank] ?? `${pred.rank}着`}
-                    </span>
-                  </div>
-                  <div className="flex items-end justify-between mt-2">
-                    <div>
-                      <p className="text-lg font-bold text-text-black">{pred.horse_name}</p>
-                      <Link
-                        to={`/horse/${pred.horse_id}`}
-                        className="text-xs text-primary hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        詳細 →
-                      </Link>
-                    </div>
-                    <p className={`text-2xl font-black ${RANK_SCORE_COLOR[pred.rank] ?? 'text-text-grey'}`}>
-                      {pred.total_score.toFixed(1)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* スコアテーブルとチャート */}
-      {predictions.length > 0 && (
-        <div className="grid grid-cols-1 desktop:grid-cols-3 gap-6">
-          <div className="desktop:col-span-2">
-            <h2 className="text-xl font-bold mb-3 text-text-black">全馬ランキング</h2>
-            <div className="card-smarthr p-2">
-              <ScoreTable
-                predictions={predictions}
-                selectedHorseId={selectedPrediction?.horse_id ?? null}
-                onHorseClick={(horseId) => handleHorseSelect(horseId)}
-              />
-            </div>
-            <p className="text-xs text-text-disabled mt-2 text-center">
-              行をクリックするとチャートが切り替わります
+            <p className="mt-0.5 text-data text-ink">
+              {race.course_type}
+              <span className="tabular-nums">{race.distance}</span>m ・{' '}
+              {race.track_condition ?? '馬場未発表'} ・ {race.weather ?? '天候未発表'}
+              {glyph && <span className="glyph"> {glyph}</span>}
             </p>
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xl font-bold text-text-black">ファクター別スコア</h2>
-              {selectedPrediction && (
-                <Link
-                  to={`/horse/${selectedPrediction.horse_id}`}
-                  className="btn-secondary btn-sm text-xs"
-                >
-                  馬詳細 →
-                </Link>
-              )}
-            </div>
-            <ScoreChart prediction={selectedPrediction} />
-          </div>
-        </div>
+          </>
+        )}
+      </div>
+
+      {/* 馬柱欄 */}
+      <section className="rule-b py-3">
+        {predictionResource.status === 'loading' && (
+          <p className="text-data text-ink-weak">馬柱を組んでいます</p>
+        )}
+        {predictionResource.status === 'error' && (
+          <p role="alert" className="text-data text-shu">
+            {FETCH_ERROR_MESSAGE}
+          </p>
+        )}
+        {predictionResource.status === 'ready' && predictions.length === 0 && (
+          <p className="text-data text-ink-weak">
+            このレースの予想はまだ組まれていません。データ取得を実行すると生成されます
+          </p>
+        )}
+        {predictions.length > 0 && (
+          <>
+            <Umabashira
+              predictions={predictions}
+              entries={entries}
+              selectedHorseId={selected?.horse_id ?? null}
+              onSelect={setSelectedHorseId}
+            />
+            {entryResource.status !== 'loading' && entries.length === 0 && (
+              <p className="mt-2 text-caption text-ink-weak">
+                出走馬の枠順・オッズ・騎手は未取得です(予想順に並べています)
+              </p>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* ファクター欄 */}
+      {selected && (
+        <section className="rule-b py-3">
+          <h2 className="mb-2 flex flex-wrap items-baseline gap-2">
+            <span className="font-mincho text-heading font-bold text-ink">
+              {selected.horse_name}
+            </span>
+            <span className="text-caption text-ink-weak">
+              総合スコア{' '}
+              <span className="tabular-nums font-bold text-ink">
+                {selected.total_score.toFixed(1)}
+              </span>
+              {' ・ 予想 '}
+              <span className="tabular-nums">{selected.rank}</span>位
+            </span>
+            <Link to={`/horse/${selected.horse_id}`} className="link-ai text-caption">
+              戦績を見る
+            </Link>
+          </h2>
+          <FactorBars prediction={selected} />
+          <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-caption text-ink-weak">
+            {MARK_LEGEND.map((legend) => (
+              <li key={legend.symbol}>
+                <span className={legend.symbol === '◎' ? 'text-shu' : 'text-ink'}>
+                  {legend.symbol}
+                </span>{' '}
+                {legend.label}({legend.note})
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
-      {predictions.length === 0 && (
-        <div className="alert-info" role="status">
-          <span>このレースの予想データはまだありません。</span>
-        </div>
+      {/* 印一覧 */}
+      {predictions.length > 0 && (
+        <section className="py-3">
+          <h2 className="mb-2 font-mincho text-heading font-bold text-ink">印一覧</h2>
+          <MarkRanking predictions={predictions} onSelect={setSelectedHorseId} />
+        </section>
       )}
     </div>
   );

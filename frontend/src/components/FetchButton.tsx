@@ -1,51 +1,79 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FetchProgress } from '../types';
+import { isStaticMode } from '../api/staticRoutes';
+
+const POLL_INTERVAL_MS = 2000;
+/** ポーリングの終了保証: 連続失敗がこの回数に達したら諦める */
+const MAX_CONSECUTIVE_FAILURES = 5;
+/** ポーリングの終了保証: 経過時間の上限 */
+const MAX_POLL_DURATION_MS = 30 * 60 * 1000;
+
+const TIMEOUT_MESSAGE =
+  'データ取得の完了を確認できませんでした。時間をおいて再実行してください';
 
 interface Props {
   onComplete: () => void;
 }
 
+/** ローカル環境のデータ取得ボタン。公開ビルド(静的モード)では表示しない */
 export default function FetchButton({ onComplete }: Props) {
   const [fetching, setFetching] = useState(false);
   const [progress, setProgress] = useState<FetchProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stopPolling = () => {
-    if (intervalRef.current !== null) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  };
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    return () => stopPolling();
+    return () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    };
   }, []);
 
-  const startPolling = () => {
-    intervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch('/api/fetch/progress');
-        if (!res.ok) return;
-        const data: FetchProgress = await res.json();
-        setProgress(data);
+  if (isStaticMode) return null;
 
-        // 完了判定: status で判定 + フォールバック
-        if (data.status === 'completed' || (data.total > 0 && data.current >= data.total)) {
-          stopPolling();
-          setFetching(false);
-          setProgress(null);
-          onComplete();
-        } else if (data.status === 'error') {
-          stopPolling();
-          setFetching(false);
-          setError(data.message || 'データ取得中にエラーが発生しました');
-          setProgress(null);
-        }
-      } catch {
-        // ポーリング中のエラーは無視（一時的な接続エラーの可能性）
+  const stop = (message: string | null) => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = null;
+    setFetching(false);
+    setProgress(null);
+    setError(message);
+  };
+
+  /**
+   * 進捗をポーリングする。完了は status === 'completed' のみで判定する
+   * (current >= total は途中のステップでも成立するため使わない)。
+   */
+  const poll = async (startedAt: number, consecutiveFailures: number) => {
+    if (Date.now() - startedAt > MAX_POLL_DURATION_MS) {
+      stop(TIMEOUT_MESSAGE);
+      return;
+    }
+
+    let failures = consecutiveFailures;
+    try {
+      const response = await fetch('/api/fetch/progress');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const latest: FetchProgress = await response.json();
+      setProgress(latest);
+
+      if (latest.status === 'completed') {
+        stop(null);
+        onComplete();
+        return;
       }
-    }, 2000);
+      if (latest.status === 'error') {
+        stop(latest.message || 'データを取得できませんでした。時間をおいて再実行してください');
+        return;
+      }
+      failures = 0;
+    } catch {
+      failures += 1;
+      if (failures >= MAX_CONSECUTIVE_FAILURES) {
+        stop(TIMEOUT_MESSAGE);
+        return;
+      }
+    }
+
+    timerRef.current = setTimeout(() => void poll(startedAt, failures), POLL_INTERVAL_MS);
   };
 
   const handleFetch = async () => {
@@ -54,78 +82,52 @@ export default function FetchButton({ onComplete }: Props) {
     setProgress(null);
 
     try {
-      const res = await fetch('/api/fetch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!res.ok) {
-        throw new Error(`API Error: ${res.status} ${res.statusText}`);
-      }
-
-      // 取得開始後にポーリング開始
-      startPolling();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setError(message);
-      setFetching(false);
+      const response = await fetch('/api/fetch', { method: 'POST' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      void poll(Date.now(), 0);
+    } catch {
+      stop('データを取得できませんでした。時間をおいて再実行してください');
     }
   };
 
   const progressPercent =
     progress && progress.total > 0
-      ? Math.round((progress.current / progress.total) * 100)
+      ? Math.min(100, Math.round((progress.current / progress.total) * 100))
       : 0;
 
-  const formatRemaining = (sec: number | null): string => {
-    if (sec === null) return '';
-    if (sec < 60) return `約${sec}秒`;
-    return `約${Math.ceil(sec / 60)}分`;
+  const formatRemaining = (seconds: number | null): string => {
+    if (seconds === null) return '';
+    if (seconds < 60) return `残り約${Math.ceil(seconds)}秒`;
+    return `残り約${Math.ceil(seconds / 60)}分`;
   };
 
   return (
-    <div className="flex flex-col gap-3 items-end">
-      <button
-        className="btn-primary"
-        onClick={handleFetch}
-        disabled={fetching}
-      >
-        {fetching ? (
-          <>
-            <svg className="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            取得中...
-          </>
-        ) : (
-          'データ取得'
-        )}
+    <div className="flex flex-col items-end gap-2">
+      <button type="button" className="btn-paper" onClick={handleFetch} disabled={fetching}>
+        {fetching ? '取得中' : 'データ取得を実行'}
       </button>
 
-      {/* エラー表示 */}
       {error && (
-        <div className="alert-error py-2 text-sm">
-          <span>{error}</span>
-        </div>
+        <p role="alert" className="text-caption text-shu">
+          {error}
+        </p>
       )}
 
-      {/* 進捗表示 */}
       {fetching && progress && (
-        <div className="w-72 space-y-1">
-          <div className="flex justify-between text-sm text-text-grey">
-            <span>{progress.step}: {progress.message}</span>
-            {progress.estimated_remaining !== null && (
-              <span>{formatRemaining(progress.estimated_remaining)}</span>
-            )}
+        <div className="w-64 space-y-1" aria-live="polite">
+          <div className="flex justify-between gap-2 text-caption text-ink-weak">
+            <span>
+              {progress.step}
+              {progress.message ? `: ${progress.message}` : ''}
+            </span>
+            <span className="shrink-0 tabular-nums">
+              {formatRemaining(progress.estimated_remaining)}
+            </span>
           </div>
-          <div className="w-full bg-stone-02 rounded-full h-2">
-            <div
-              className="h-2 rounded-full bg-primary transition-all duration-500"
-              style={{ width: `${progressPercent}%` }}
-            />
+          <div className="h-1 w-full bg-rule">
+            <div className="h-1 bg-ink" style={{ width: `${progressPercent}%` }} />
           </div>
-          <p className="text-xs text-text-disabled text-right">
+          <p className="text-right text-caption tabular-nums text-ink-weak">
             {progress.current} / {progress.total}
           </p>
         </div>

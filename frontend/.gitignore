@@ -1,0 +1,5 @@
+# tsc -b (build mode) の増分ビルド情報
+*.tsbuildinfo
+
+# 公開ビルド用の静的データ(CI が `python -m app.cli export` で生成して置く)
+public/data/

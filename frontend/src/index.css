@@ -1,71 +1,181 @@
-/* AdjustedYuGothic: Windows 游ゴシック Medium→400, Bold→700 マッピング */
-@font-face {
-  font-family: AdjustedYuGothic;
-  font-weight: 400;
-  src: local("Yu Gothic Medium");
-}
-
-@font-face {
-  font-family: AdjustedYuGothic;
-  font-weight: 700;
-  src: local("Yu Gothic Bold");
-}
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* DESIGN.md「重賞スコープ」§2 のカラートークン。ここが唯一の定義元で、
+   tailwind.config.js は var(--…) を参照する。ダークモードは意図的に非対応(§1)。 */
+:root {
+  --paper: #faf7f0;
+  --paper-inset: #f3eee3;
+  --ink: #1c1a17;
+  --ink-weak: #6e675c;
+  --rule: #d5cdbe;
+  --shu: #c43b2e;
+  --ai: #33507a;
+  /* 枠色(JRA 慣習に固定。機能色であり変更禁止) */
+  --waku-1: #ffffff;
+  --waku-2: #2b2b2b;
+  --waku-3: #d9333f;
+  --waku-4: #005caf;
+  --waku-5: #efbb24;
+  --waku-6: #227d51;
+  --waku-7: #ed6d3d;
+  --waku-8: #ee87b4;
+}
+
 @layer base {
+  html {
+    color-scheme: light;
+  }
+
   body {
-    @apply bg-stone-01 text-text-black leading-normal;
+    @apply bg-paper text-ink text-body;
     overflow-wrap: break-word;
+  }
+
+  /* キーボードフォーカス(DESIGN.md §7) */
+  :focus-visible {
+    outline: 2px solid var(--ai);
+    outline-offset: 2px;
+  }
+
+  /* 数値は必ず tabular(DESIGN.md §3)。表と大数値では明示的に指定する */
+  th,
+  td {
+    font-variant-numeric: tabular-nums;
   }
 }
 
 @layer components {
-  /* ボタン */
-  .btn-primary {
-    @apply inline-flex items-center justify-center px-4 py-2 bg-primary text-white font-bold rounded border border-primary hover:brightness-90 transition-colors min-h-[44px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2;
+  /* 細罫(区切り線全般)。カードではなく罫で欄を仕切る(§1) */
+  .rule-b {
+    @apply border-b border-rule;
   }
-  .btn-secondary {
-    @apply inline-flex items-center justify-center px-4 py-2 bg-transparent text-primary font-bold rounded border border-primary hover:bg-primary/5 transition-colors min-h-[44px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2;
+  .rule-t {
+    @apply border-t border-rule;
   }
-  .btn-danger {
-    @apply inline-flex items-center justify-center px-4 py-2 bg-danger text-white font-bold rounded border border-danger hover:brightness-90 transition-colors min-h-[44px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2;
-  }
-  .btn-ghost {
-    @apply inline-flex items-center justify-center px-4 py-2 bg-transparent text-text-black rounded hover:bg-over-bg transition-colors min-h-[44px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2;
-  }
-  .btn-sm {
-    @apply px-3 py-1 text-sm min-h-[36px];
-  }
-  .btn-xs {
-    @apply px-2 py-0.5 text-xs min-h-[28px];
+  /* 見出しと本欄を分ける太罫(§5-2) */
+  .rule-heavy {
+    @apply border-b-2 border-ink;
   }
 
-  /* カード */
-  .card-smarthr {
-    @apply bg-surface rounded-lg shadow-sm border border-border;
+  /* 枠色チップ(馬番入り)。地色と文字色は JRA 慣習(§2) */
+  .chip-waku {
+    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center
+      text-caption font-bold leading-none;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip-waku-1 {
+    background: var(--waku-1);
+    color: var(--ink);
+    box-sizing: border-box;
+    border: 1px solid var(--rule);
+  }
+  .chip-waku-2 {
+    background: var(--waku-2);
+    color: #fff;
+  }
+  .chip-waku-3 {
+    background: var(--waku-3);
+    color: #fff;
+  }
+  .chip-waku-4 {
+    background: var(--waku-4);
+    color: #fff;
+  }
+  .chip-waku-5 {
+    background: var(--waku-5);
+    color: var(--ink);
+  }
+  .chip-waku-6 {
+    background: var(--waku-6);
+    color: #fff;
+  }
+  .chip-waku-7 {
+    background: var(--waku-7);
+    color: #fff;
+  }
+  .chip-waku-8 {
+    background: var(--waku-8);
+    color: var(--ink);
   }
 
-  /* バッジ */
-  .badge-smarthr {
-    @apply inline-flex items-center px-2 py-0.5 text-xs font-bold rounded;
+  /* 予想印(◎○▲△)。◎ のみ朱(§1) */
+  .mark {
+    @apply inline-block text-center leading-none;
+    font-size: 20px;
   }
 
-  /* アラート */
-  .alert-error {
-    @apply flex items-center gap-2 p-4 bg-danger/10 border border-danger/30 text-danger rounded-lg;
+  /* グレード章。角丸なしの小さな矩形(§2) */
+  .badge-grade {
+    @apply inline-flex items-center px-1.5 py-0.5 font-bold leading-none;
+    font-size: 11px;
+    letter-spacing: 0.08em;
   }
-  .alert-warning {
-    @apply flex items-center gap-2 p-4 bg-warning/10 border border-warning/30 text-text-black rounded-lg;
+  .badge-grade-g1 {
+    background: var(--shu);
+    color: #fff;
   }
-  .alert-info {
-    @apply flex items-center gap-2 p-4 bg-primary/10 border border-primary/30 text-primary rounded-lg;
+  .badge-grade-g2 {
+    background: var(--ai);
+    color: #fff;
+  }
+  .badge-grade-g3 {
+    background: var(--ink);
+    color: #fff;
+  }
+  .badge-grade-op {
+    background: transparent;
+    color: var(--ink);
+    box-sizing: border-box;
+    border: 1px solid var(--rule);
   }
 
-  /* スケルトン */
-  .skeleton {
-    @apply bg-stone-02 rounded animate-pulse;
+  /* 紙面のボタン: 罫線囲みのみ。動作をそのまま書く(§8) */
+  .btn-paper {
+    @apply inline-flex min-h-[36px] cursor-pointer items-center justify-center
+      border border-ink px-3 py-1 text-data font-bold text-ink
+      transition-colors hover:bg-paper-inset
+      disabled:cursor-not-allowed disabled:border-rule disabled:text-ink-weak
+      disabled:hover:bg-transparent;
+  }
+
+  .link-ai {
+    @apply text-ai underline decoration-rule underline-offset-2 hover:decoration-ai;
+  }
+
+  /* 天気の記号。Windows の既定フォールバックはカラー絵文字になるため、
+     単色シンボルフォントを明示して墨の紙面に揃える */
+  .glyph {
+    font-family: 'Segoe UI Symbol', 'Hiragino Sans', 'IBM Plex Sans JP', sans-serif;
+    font-variant-emoji: text;
+  }
+
+  /* 縦組み(馬名・騎手名) */
+  .tategaki {
+    writing-mode: vertical-rl;
+  }
+}
+
+@layer utilities {
+  /* 予想印の捺印モーション(DESIGN.md §6)。馬柱の右から 40ms ずつずらす */
+  @keyframes stamp-in {
+    from {
+      opacity: 0;
+      transform: scale(1.15);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  .stamp {
+    animation: stamp-in 150ms ease-out both;
+    animation-delay: calc(var(--stamp-index, 0) * 40ms);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stamp {
+      animation: none;
+    }
   }
 }

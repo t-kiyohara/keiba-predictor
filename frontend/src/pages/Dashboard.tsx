@@ -1,99 +1,181 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Race } from '../types';
-import { useApi } from '../hooks/useApi';
-import RaceCard from '../components/RaceCard';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Prediction, Race, TopPick } from '../types';
+import { apiGet, FETCH_ERROR_MESSAGE, useResource } from '../hooks/useApi';
+import { isStaticMode } from '../api/staticRoutes';
 import FetchButton from '../components/FetchButton';
+import {
+  formatPaperDate,
+  gradeBadgeClass,
+  raceNumberFromId,
+  weatherGlyph,
+} from '../constants/paper';
 
-export default function Dashboard() {
-  const [races, setRaces] = useState<Race[]>([]);
-  const { fetchApi, loading, error } = useApi();
+/** 日付ごとに並べ替えずグルーピング(API は date 降順で返す) */
+function groupByDate(races: Race[]): [string, Race[]][] {
+  const grouped = new Map<string, Race[]>();
+  for (const race of races) {
+    const sameDate = grouped.get(race.date);
+    if (sameDate) sameDate.push(race);
+    else grouped.set(race.date, [race]);
+  }
+  return [...grouped.entries()];
+}
 
-  const loadRaces = useCallback(async () => {
-    const data = await fetchApi<Race[]>('/races');
-    if (data) {
-      setRaces(data);
-    }
-  }, [fetchApi]);
+/**
+ * 本紙の◎(予想1位馬)を補う。
+ * 静的データ契約では races.json が top_pick を持つので追加取得は起きない。
+ * ponytail: API モードは /api/races が top_pick を返さないためレース数ぶんの
+ * N+1 になる。重賞のみで件数が小さいので許容。解消するなら
+ * バックエンドの RaceOut に top_pick を持たせる。
+ */
+function useTopPicks(races: Race[]): Record<string, TopPick | null> {
+  const [topPicks, setTopPicks] = useState<Record<string, TopPick | null>>({});
 
   useEffect(() => {
-    loadRaces();
-  }, [loadRaces]);
+    const missing = races.filter((race) => race.top_pick === undefined);
+    if (missing.length === 0) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    Promise.all(
+      missing.map(async (race): Promise<[string, TopPick | null]> => {
+        try {
+          const predictions = await apiGet<Prediction[]>(
+            `/races/${race.id}/predictions`,
+            controller.signal,
+          );
+          const top = predictions?.find((prediction) => prediction.rank === 1);
+          return [
+            race.id,
+            top
+              ? {
+                  horse_id: top.horse_id,
+                  horse_name: top.horse_name,
+                  total_score: top.total_score,
+                }
+              : null,
+          ];
+        } catch {
+          return [race.id, null];
+        }
+      }),
+    ).then((pairs) => {
+      if (!cancelled) setTopPicks(Object.fromEntries(pairs));
+    });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [races]);
+
+  return topPicks;
+}
+
+function RaceRow({ race, topPick }: { race: Race; topPick: TopPick | null | undefined }) {
+  const glyph = weatherGlyph(race.weather);
+  const raceNumber = raceNumberFromId(race.id);
 
   return (
-    <div className="space-y-6">
-      {/* ページタイトル */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-text-black">ダッシュボード</h1>
-        <FetchButton onComplete={loadRaces} />
+    <li className="rule-b">
+      <Link
+        to={`/race/${race.id}`}
+        className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 px-2 py-2.5
+          transition-colors hover:bg-paper-inset sp:grid-cols-[auto_1fr]
+          md:grid-cols-[auto_minmax(11rem,16rem)_1fr_auto]"
+      >
+        <span className={gradeBadgeClass(race.grade)}>{race.grade}</span>
+
+        <span className="font-mincho text-heading font-bold text-ink">{race.name}</span>
+
+        <span className="col-span-2 text-data text-ink-weak md:col-span-1">
+          {race.venue}
+          {raceNumber ? ` ${raceNumber}` : ''} ・ {race.course_type}
+          <span className="tabular-nums">{race.distance}</span>m
+          {race.track_condition ? ` ・ ${race.track_condition}` : ''}
+          {glyph && <span className="glyph"> {glyph}</span>}
+        </span>
+
+        <span className="col-span-2 flex items-baseline gap-1.5 text-data md:col-span-1 md:justify-end">
+          {topPick ? (
+            <>
+              <span className="mark text-shu" aria-label="本命">
+                ◎
+              </span>
+              <span className="font-bold text-ink">{topPick.horse_name}</span>
+            </>
+          ) : (
+            <span className="text-ink-weak">予想未生成</span>
+          )}
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+export default function Dashboard() {
+  const { value, status, reload } = useResource<Race[]>('/races');
+  const races = value ?? [];
+  const topPicks = useTopPicks(races);
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <p className="text-caption text-ink-weak">
+          {status === 'ready' && races.length > 0 ? (
+            <>
+              掲載 <span className="tabular-nums">{races.length}</span> レース
+            </>
+          ) : (
+            '週末の重賞と本紙の見解を載せています'
+          )}
+        </p>
+        <FetchButton onComplete={reload} />
       </div>
 
-      {/* エラー表示 */}
-      {error && (
-        <div className="alert-error">
-          <svg xmlns="http://www.w3.org/2000/svg" className="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span>{error}</span>
-        </div>
+      {status === 'loading' && (
+        <p className="rule-t py-6 text-center text-data text-ink-weak">
+          番組表を読み込んでいます
+        </p>
       )}
 
-      {/* ローディング中 - スケルトン表示 */}
-      {loading && (
-        <div className="grid grid-cols-1 tablet:grid-cols-2 desktop:grid-cols-3 gap-4">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="card-smarthr">
-              <div className="p-4 space-y-3">
-                <div className="skeleton h-6 w-3/4"></div>
-                <div className="skeleton h-4 w-1/2"></div>
-                <div className="skeleton h-4 w-2/3"></div>
-                <div className="flex justify-end">
-                  <div className="skeleton h-8 w-24"></div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+      {status === 'error' && (
+        <p role="alert" className="rule-t py-6 text-center text-data text-shu">
+          {FETCH_ERROR_MESSAGE}
+        </p>
       )}
 
-      {/* レース一覧 */}
-      {!loading && races.length > 0 && (
-        <div>
-          <h2 className="text-xl font-bold mb-4 text-text-black">レース一覧 ({races.length}件)</h2>
-          <div className="grid grid-cols-1 tablet:grid-cols-2 desktop:grid-cols-3 gap-4">
-            {races.map((race) => (
-              <RaceCard key={race.id} race={race} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* データなし */}
-      {!loading && races.length === 0 && !error && (
-        <div className="flex items-center justify-center min-h-[50vh] card-smarthr">
-          <div className="text-center max-w-md p-8">
-            <div className="text-8xl mb-6">🏇</div>
-            <h2 className="text-2xl font-bold mb-4 text-text-black">レースデータがありません</h2>
-            <p className="text-base text-text-grey mb-6">
-              右上の「データ取得」ボタンを押してレース情報を取得してください。<br />
-              取得完了後、最新のレース予想をご確認いただけます。
+      {status === 'ready' && races.length === 0 && (
+        <div className="rule-t py-8 text-center">
+          <p className="font-mincho text-heading font-bold text-ink">
+            次回更新: 土曜 6:00
+          </p>
+          {!isStaticMode && (
+            <p className="mt-1 text-data text-ink-weak">
+              手動で取得する場合はデータ取得を実行してください
             </p>
-            <div className="flex flex-col gap-2 text-sm text-text-disabled">
-              <div className="flex items-center justify-center gap-2">
-                <span className="badge-smarthr border border-border text-text-grey">Step 1</span>
-                <span>「データ取得」ボタンをクリック</span>
-              </div>
-              <div className="flex items-center justify-center gap-2">
-                <span className="badge-smarthr border border-border text-text-grey">Step 2</span>
-                <span>データ取得完了を待機</span>
-              </div>
-              <div className="flex items-center justify-center gap-2">
-                <span className="badge-smarthr border border-border text-text-grey">Step 3</span>
-                <span>レース一覧から予想を確認</span>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       )}
+
+      {groupByDate(races).map(([date, racesOnDate]) => (
+        <section key={date} className="mb-5">
+          <h2 className="rule-b py-1.5 font-mincho text-heading font-bold text-ink">
+            {formatPaperDate(date)}
+          </h2>
+          <ul>
+            {racesOnDate.map((race) => (
+              <RaceRow
+                key={race.id}
+                race={race}
+                topPick={race.top_pick ?? topPicks[race.id]}
+              />
+            ))}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }
