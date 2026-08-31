@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.database import SessionLocal, init_db
 from app.models import Entry, Horse, Jockey, Race, Result, Trainer
+from app.scrapers.jra import get_target_race_dates
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -26,6 +27,11 @@ def seed() -> None:
     fixtures_path = Path(__file__).parent.parent / "fixtures" / "sample_race.json"
     data = json.loads(fixtures_path.read_text(encoding="utf-8"))
 
+    # スコアリング対象は date >= today のみ（fetch_service._score_existing_races）。
+    # fixture のレース日付は固定の過去日なので、実行日から見た直近の土曜日
+    # （get_target_race_dates と同じ規則）に付け替えて予想が生成されるようにする。
+    upcoming_race_date = get_target_race_dates(date.today())[0]
+
     db = SessionLocal()
     try:
         # ---- Races ----
@@ -35,7 +41,7 @@ def seed() -> None:
                     Race(
                         id=r["id"],
                         name=r["name"],
-                        date=_parse_date(r["date"]),
+                        date=upcoming_race_date,
                         venue=r["venue"],
                         course_type=r["course_type"],
                         distance=r["distance"],
