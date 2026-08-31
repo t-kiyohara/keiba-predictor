@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import date
+from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
@@ -121,6 +122,12 @@ class NetkeibaScraper(BaseScraper):
     BASE_URL = "https://race.netkeiba.com"
     DB_URL = "https://db.netkeiba.com"
 
+    # レース検索（pid=race_list）のパラメータ
+    GRADES = (1, 2, 3)  # 1=G1, 2=G2, 3=G3
+    GRADED_LIST_PAGE_SIZE = 100
+    # 5年分でも約700件（1ページ100件）。暴走時の無限リクエストを止める安全弁
+    MAX_GRADED_LIST_PAGES = 100
+
     async def fetch_race_list_by_date(self, target_date: date) -> list[dict]:
         """日付指定でその日のレース一覧を取得する。
 
@@ -160,6 +167,88 @@ class NetkeibaScraper(BaseScraper):
             results.append({"race_id": race_id, "race_number": race_number})
 
         return results
+
+    def _graded_race_list_url(
+        self, start_year: int, end_year: int, page: int
+    ) -> str:
+        """db.netkeiba のレース検索URLを組み立てる。
+
+        `jyo[]` はJRA10場（_VENUE_CODE のキー）を必ず全て付ける。付けないと
+        地方・海外の重賞が結果に混入する。`grade[]` は 1=G1, 2=G2, 3=G3。
+        """
+        params: list[tuple[str, str | int]] = [
+            ("pid", "race_list"),
+            ("start_year", start_year),
+            ("end_year", end_year),
+        ]
+        params += [("grade[]", grade) for grade in self.GRADES]
+        params += [("jyo[]", venue_code) for venue_code in _VENUE_CODE]
+        params += [("list", self.GRADED_LIST_PAGE_SIZE), ("page", page)]
+        return f"{self.DB_URL}/?{urlencode(params)}"
+
+    def _parse_graded_race_ids(self, soup: BeautifulSoup) -> list[str]:
+        """検索結果テーブル（table.race_table_01）から race_id を抽出する。
+
+        レース名セルのリンク `<a href="/race/202406050911/">` が取得元。
+        開催日リンク（`/race/list/20240601/`）は12桁ではないため一致しない。
+        """
+        table = soup.select_one("table.race_table_01")
+        if table is None:
+            return []
+        race_ids: list[str] = []
+        for link in table.select("a[href*='/race/']"):
+            match = re.search(r"/race/(\d{12})", link["href"])
+            if match:
+                race_ids.append(match.group(1))
+        return race_ids
+
+    async def fetch_graded_race_ids(
+        self, start_year: int, end_year: int
+    ) -> list[str]:
+        """指定期間のJRA重賞（G1/G2/G3）の race_id を列挙する。
+
+        Args:
+            start_year: 検索開始年（両端含む）
+            end_year: 検索終了年（両端含む）
+
+        Returns:
+            race_id のリスト（重複排除済み、検索結果の出現順）。
+            途中で取得に失敗した場合はそこまでに集めた分を返す。
+
+        新しい race_id が現れなくなったページで打ち切る。件数表示
+        （"139件中1~100件目"）のパースには依存しない。
+        """
+        race_ids: list[str] = []
+        seen_race_ids: set[str] = set()
+
+        for page in range(1, self.MAX_GRADED_LIST_PAGES + 1):
+            url = self._graded_race_list_url(start_year, end_year, page)
+            try:
+                html = await self.fetch(url, encoding="euc-jp")
+            except Exception as e:
+                self.logger.warning("重賞一覧取得失敗 (page=%d): %s", page, e)
+                break
+
+            page_race_ids = self._parse_graded_race_ids(self.parse_html(html))
+            new_race_ids = [
+                race_id
+                for race_id in page_race_ids
+                if race_id not in seen_race_ids
+            ]
+            if not new_race_ids:
+                break
+            seen_race_ids.update(new_race_ids)
+            race_ids.extend(new_race_ids)
+        else:
+            self.logger.warning(
+                "重賞一覧のページ上限(%d)に達したため打ち切りました",
+                self.MAX_GRADED_LIST_PAGES,
+            )
+
+        self.logger.info(
+            "重賞 %d件を列挙しました (%d〜%d年)", len(race_ids), start_year, end_year
+        )
+        return race_ids
 
     def _parse_race_info(self, soup: BeautifulSoup, race_id: str) -> dict:
         """soupからレース情報（距離, コース種別, グレード, 会場, 日付等）を抽出する。

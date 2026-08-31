@@ -1516,3 +1516,136 @@ class TestNetkeibaFetchRaceResult:
         ):
             parsed = await scraper.fetch_race_result("999999999999")
         assert parsed == {}
+
+
+# ---------------------------------------------------------------------------
+# NetkeibaScraper.fetch_graded_race_ids
+# ---------------------------------------------------------------------------
+
+# db.netkeiba.com のレース検索結果（pid=race_list）を模したHTML。
+# レース名セルのリンク /race/{12桁}/ から race_id を取る。
+GRADED_LIST_PAGE1_HTML = """
+<html><body>
+<div class="race_list">139件中1~100件目</div>
+<table class="race_table_01">
+  <tr><th>日付</th><th>レース名</th><th>開催</th></tr>
+  <tr>
+    <td><a href="/race/list/20241228/">2024/12/28</a></td>
+    <td><a href="/race/202406050911/" title="ホープフルS(GI)">ホープフルS</a></td>
+    <td><a href="/race/sum/06/2024/">5中山9</a></td>
+  </tr>
+  <tr>
+    <td><a href="/race/list/20241222/">2024/12/22</a></td>
+    <td><a href="/race/202405051211/" title="有馬記念(GI)">有馬記念</a></td>
+    <td><a href="/race/sum/05/2024/">5東京12</a></td>
+  </tr>
+</table>
+</body></html>
+"""
+
+GRADED_LIST_PAGE2_HTML = """
+<html><body>
+<div class="race_list">139件中101~139件目</div>
+<table class="race_table_01">
+  <tr><th>日付</th><th>レース名</th><th>開催</th></tr>
+  <tr>
+    <td><a href="/race/list/20240107/">2024/01/07</a></td>
+    <td><a href="/race/202406010211/" title="シンザン記念(GIII)">シンザン記念</a></td>
+    <td><a href="/race/sum/06/2024/">1中山2</a></td>
+  </tr>
+</table>
+</body></html>
+"""
+
+GRADED_LIST_EMPTY_HTML = """
+<html><body>
+<div class="race_list">該当するレースがありません</div>
+<table class="race_table_01">
+  <tr><th>日付</th><th>レース名</th><th>開催</th></tr>
+</table>
+</body></html>
+"""
+
+
+class TestNetkeibaFetchGradedRaceIds:
+    """NetkeibaScraper.fetch_graded_race_ids() の列挙・ページングテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_paginates_until_empty_page(self):
+        """行が無くなるページまで辿り、全ページのrace_idを順に返すこと。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(
+            side_effect=[
+                GRADED_LIST_PAGE1_HTML,
+                GRADED_LIST_PAGE2_HTML,
+                GRADED_LIST_EMPTY_HTML,
+            ]
+        )
+        with patch.object(scraper, "fetch", new=mock):
+            race_ids = await scraper.fetch_graded_race_ids(2024, 2024)
+
+        assert race_ids == [
+            "202406050911",
+            "202405051211",
+            "202406010211",
+        ]
+        assert mock.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_query_includes_all_jra_venues_and_grades(self):
+        """jyo[]（JRA10場）とgrade[]（G1〜G3）が全て付き、EUC-JPで取得すること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(side_effect=[GRADED_LIST_PAGE1_HTML, GRADED_LIST_EMPTY_HTML])
+        with patch.object(scraper, "fetch", new=mock):
+            await scraper.fetch_graded_race_ids(2021, 2026)
+
+        first_url = mock.await_args_list[0].args[0]
+        assert "pid=race_list" in first_url
+        assert "start_year=2021" in first_url
+        assert "end_year=2026" in first_url
+        assert "list=100" in first_url
+        assert "page=1" in first_url
+        for grade in (1, 2, 3):
+            assert f"grade%5B%5D={grade}" in first_url
+        for venue_code in ("01", "02", "03", "04", "05", "06", "07", "08", "09", "10"):
+            assert f"jyo%5B%5D={venue_code}" in first_url
+        assert mock.await_args_list[0].kwargs["encoding"] == "euc-jp"
+        assert "page=2" in mock.await_args_list[1].args[0]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_page_stops_pagination(self):
+        """同じページが返り続けても新規IDが無い時点で打ち切ること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(
+            side_effect=[GRADED_LIST_PAGE1_HTML, GRADED_LIST_PAGE1_HTML]
+        )
+        with patch.object(scraper, "fetch", new=mock):
+            race_ids = await scraper.fetch_graded_race_ids(2024, 2024)
+
+        assert race_ids == ["202406050911", "202405051211"]
+        assert mock.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_returns_collected_ids(self):
+        """途中でHTTPエラーになってもそこまでのrace_idを返すこと。"""
+        import httpx
+
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(
+            side_effect=[GRADED_LIST_PAGE1_HTML, httpx.HTTPError("500")]
+        )
+        with patch.object(scraper, "fetch", new=mock):
+            race_ids = await scraper.fetch_graded_race_ids(2024, 2024)
+
+        assert race_ids == ["202406050911", "202405051211"]
+
+    @pytest.mark.asyncio
+    async def test_no_table_returns_empty_list(self):
+        """検索結果テーブルが無い場合は空リストを返すこと。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value="<html><body>メンテナンス中</body></html>")
+        with patch.object(scraper, "fetch", new=mock):
+            race_ids = await scraper.fetch_graded_race_ids(2024, 2024)
+
+        assert race_ids == []
+        assert mock.await_count == 1
