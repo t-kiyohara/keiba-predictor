@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Horse, Prediction, Race
-from app.schemas import PredictionOut, RaceOut
+from app.models import Entry, Horse, Jockey, Prediction, Race
+from app.schemas import EntryOut, PredictionOut, RaceOut
 from app.scoring.engine import latest_prediction_batch
+from app.services.export_service import _entry_payload, _sorted_entries
 
 router = APIRouter(prefix="/api/races", tags=["races"])
 
@@ -51,4 +52,30 @@ def get_race_predictions(race_id: str, db: Session = Depends(get_db)):
             factor_scores=pred.score_details or {},
         )
         for pred in latest_prediction_batch(pred for pred, _ in rows)
+    ]
+
+
+@router.get("/{race_id}/entries", response_model=list[EntryOut])
+def get_race_entries(race_id: str, db: Session = Depends(get_db)):
+    """レースの出走馬一覧を返す（馬番昇順。静的エクスポートの entries と同形）"""
+    race = db.get(Race, race_id)
+    if race is None:
+        raise HTTPException(status_code=404, detail="Race not found")
+
+    entries = db.query(Entry).filter(Entry.race_id == race_id).all()
+    horse_ids = [e.horse_id for e in entries]
+    horse_by_id = (
+        {h.id: h for h in db.query(Horse).filter(Horse.id.in_(horse_ids)).all()}
+        if horse_ids
+        else {}
+    )
+    jockey_ids = [e.jockey_id for e in entries if e.jockey_id]
+    jockey_name_by_id = (
+        {j.id: j.name for j in db.query(Jockey).filter(Jockey.id.in_(jockey_ids)).all()}
+        if jockey_ids
+        else {}
+    )
+    return [
+        _entry_payload(entry, horse_by_id, jockey_name_by_id, race.date)
+        for entry in _sorted_entries(entries)
     ]

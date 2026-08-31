@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+from tests.factories import make_entry as _make_entry
 from tests.factories import make_horse as _make_horse
+from tests.factories import make_jockey as _make_jockey
 from tests.factories import make_prediction as _make_prediction
 from tests.factories import make_race as _make_race
 
@@ -192,3 +194,46 @@ class TestGetRacePredictions:
             "rank", "horse_id", "horse_name", "total_score", "factor_scores",
         }
         assert set(pred.keys()) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# GET /api/races/{race_id}/entries
+# ---------------------------------------------------------------------------
+
+class TestGetRaceEntries:
+    def test_entries_race_not_found(self, client):
+        """存在しないレースは404を返す"""
+        response = client.get("/api/races/no_such_race/entries")
+        assert response.status_code == 404
+
+    def test_entries_sorted_by_horse_number(self, client, db):
+        """馬番昇順で返り、静的エクスポートの entries と同じキーを持つ"""
+        _make_race(db, "r_ent_001", race_date=date(2026, 6, 1))
+        _make_horse(db, "h_ent_1", name="一番星", sex="牡", birthday=date(2023, 3, 1))
+        _make_horse(db, "h_ent_2", name="二番星")
+        _make_jockey(db, "j_ent_1", name="出走騎手")
+        _make_entry(
+            db, "r_ent_001", "h_ent_2",
+            horse_number=5, post_position=3, weight=57.0, odds=4.2,
+        )
+        _make_entry(
+            db, "r_ent_001", "h_ent_1",
+            jockey_id="j_ent_1", horse_number=2, post_position=1,
+        )
+
+        response = client.get("/api/races/r_ent_001/entries")
+        assert response.status_code == 200
+        data = response.json()
+        assert [e["horse_number"] for e in data] == [2, 5]
+
+        first = data[0]
+        assert set(first.keys()) == {
+            "horse_id", "horse_number", "post_position", "weight",
+            "odds", "jockey_name", "sex", "age",
+        }
+        assert first["horse_id"] == "h_ent_1"
+        assert first["jockey_name"] == "出走騎手"
+        assert first["sex"] == "牡"
+        assert first["age"] == 3  # 2026 - 2023
+        assert data[1]["jockey_name"] is None
+        assert data[1]["odds"] == 4.2
