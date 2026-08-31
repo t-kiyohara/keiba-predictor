@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 
@@ -319,6 +320,53 @@ class NetkeibaScraper(BaseScraper):
             },
             "entries": entries,
         }
+
+    async def fetch_odds(self, race_id: str) -> dict[int, float]:
+        """非公式オッズJSON APIから単勝オッズを取得する。
+
+        Args:
+            race_id: netkeibaのレースID
+
+        Returns:
+            馬番(int) → 単勝オッズ(float) の辞書。未発売/存在しないレースや
+            解析失敗時は空dict `{}` を返す。
+        """
+        url = f"{self.BASE_URL}/api/api_get_jra_odds.html?race_id={race_id}&type=1"
+        try:
+            text = await self.fetch(url)
+        except Exception as e:
+            self.logger.warning("オッズ取得失敗 (race_id=%s): %s", race_id, e)
+            return {}
+
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, TypeError) as e:
+            self.logger.warning("オッズJSON解析失敗 (race_id=%s): %s", race_id, e)
+            return {}
+
+        # 未発売/存在しないレースは data が空文字列（dictでない）で返る。
+        # statusではなくdataの形で判定する。
+        odds_payload = payload.get("data") if isinstance(payload, dict) else None
+        win_odds = (
+            odds_payload.get("odds", {}).get("1")
+            if isinstance(odds_payload, dict)
+            else None
+        )
+        if not isinstance(win_odds, dict):
+            self.logger.warning("オッズデータなし (race_id=%s)", race_id)
+            return {}
+
+        win_odds_by_horse_number: dict[int, float] = {}
+        for horse_number_str, odds_values in win_odds.items():
+            try:
+                horse_number = int(horse_number_str)
+                win_odds_value = float(odds_values[0])
+            except (ValueError, TypeError, IndexError):
+                # 取消馬（"---"等）や不正な形式の要素はスキップ
+                continue
+            win_odds_by_horse_number[horse_number] = win_odds_value
+
+        return win_odds_by_horse_number
 
     def _parse_profile_page(self, soup: BeautifulSoup) -> dict:
         """プロフィールページからプロフィール情報を抽出する。

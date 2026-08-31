@@ -195,6 +195,11 @@ class FetchService:
 
             self._persist_race_entries(entries_data)
 
+            # 単勝オッズを取得・反映（失敗してもレース処理は継続する）
+            odds_by_horse_number = await self.netkeiba.fetch_odds(race_id)
+            if odds_by_horse_number:
+                self._persist_odds(race_id, odds_by_horse_number)
+
             # 保存したRaceオブジェクトを収集
             race = self.db.get(Race, race_id)
             if race:
@@ -409,6 +414,24 @@ class FetchService:
                 )
                 existing_entry.weight = entry_data.get("weight", existing_entry.weight)
 
+        self.db.flush()
+
+    def _persist_odds(
+        self, race_id: str, odds_by_horse_number: dict[int, float]
+    ) -> None:
+        """単勝オッズをEntry.oddsに反映する（馬番マッチでupdate）。
+
+        Args:
+            race_id: netkeibaのレースID
+            odds_by_horse_number: fetch_odds() の返り値（馬番→単勝オッズ）
+
+        該当馬番のオッズが無いEntryはoddsをNoneのままにする。
+        """
+        entries = self.db.query(Entry).filter_by(race_id=race_id).all()
+        for entry in entries:
+            odds_value = odds_by_horse_number.get(entry.horse_number)
+            if odds_value is not None:
+                entry.odds = odds_value
         self.db.flush()
 
     def _persist_horse_profile(self, profile: dict) -> None:

@@ -110,6 +110,10 @@ def _full_pipeline_mocks(service: FetchService):
             new=AsyncMock(return_value=_make_entries_data()),
         ),
         patch.object(
+            service.netkeiba, "fetch_odds",
+            new=AsyncMock(return_value={}),
+        ),
+        patch.object(
             service.netkeiba, "fetch_horse_profile",
             new=AsyncMock(return_value=_make_horse_profile()),
         ),
@@ -229,6 +233,60 @@ class TestFetchServiceFullPipeline:
         ranks = sorted(p.rank for p in preds)
         assert ranks == [1, 2]
 
+    def test_execute_persists_odds(self, db):
+        """execute() が fetch_odds の結果を馬番マッチでEntry.oddsに反映すること。"""
+        service = FetchService(db)
+
+        with (
+            patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
+            patch.object(
+                service.jra, "fetch_graded_races",
+                new=AsyncMock(return_value=_make_graded_races()),
+            ),
+            patch.object(
+                service.netkeiba, "fetch_race_list_by_date",
+                new=AsyncMock(return_value=_make_netkeiba_race_list()),
+            ),
+            patch.object(
+                service.netkeiba, "fetch_race_entries",
+                new=AsyncMock(return_value=_make_entries_data()),
+            ),
+            patch.object(
+                service.netkeiba, "fetch_odds",
+                new=AsyncMock(return_value={1: 3.4}),
+            ),
+            patch.object(
+                service.netkeiba, "fetch_horse_profile",
+                new=AsyncMock(return_value=_make_horse_profile()),
+            ),
+            patch.object(
+                service.netkeiba, "fetch_horse_results",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                service.weather, "get_weather",
+                new=AsyncMock(
+                    return_value={
+                        "weather": "晴れ",
+                        "temp": 20.0,
+                        "humidity": 45,
+                        "description": "clear sky",
+                    }
+                ),
+            ),
+        ):
+            asyncio.run(service.execute())
+
+        # 馬番1(h_fs_001)はodds反映、馬番2(h_fs_002)は該当なしでNoneのまま
+        entry_a = (
+            db.query(Entry).filter_by(race_id=_RACE_ID, horse_id="h_fs_001").first()
+        )
+        entry_b = (
+            db.query(Entry).filter_by(race_id=_RACE_ID, horse_id="h_fs_002").first()
+        )
+        assert entry_a.odds == 3.4
+        assert entry_b.odds is None
+
     def test_execute_updates_weather(self, db):
         """execute() が天気情報を Race に反映すること"""
         service = FetchService(db)
@@ -246,6 +304,10 @@ class TestFetchServiceFullPipeline:
             patch.object(
                 service.netkeiba, "fetch_race_entries",
                 new=AsyncMock(return_value=_make_entries_data()),
+            ),
+            patch.object(
+                service.netkeiba, "fetch_odds",
+                new=AsyncMock(return_value={}),
             ),
             patch.object(
                 service.netkeiba, "fetch_horse_profile",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
@@ -529,6 +530,43 @@ class TestJraFetchGradedRaces:
         assert result[0]["grade"] == "G2"
 
 
+# 単勝オッズAPIフィクスチャ（確定レース）
+ODDS_API_RESPONSE = json.dumps(
+    {
+        "status": "result",
+        "data": {
+            "official_datetime": "2026-04-27 10:00:00",
+            "odds": {
+                "1": {"01": ["76.9", "0.0", "10"], "13": ["2.1", "0.0", "1"]},
+                "2": {"01": ["11.6", "22.1", "15"]},
+            },
+        },
+        "update_count": "0",
+        "reason": "",
+    }
+)
+
+# 単勝オッズAPIフィクスチャ（未発売/存在しないレース: dataが空文字列）
+ODDS_API_RESPONSE_NOT_AVAILABLE = json.dumps(
+    {"status": "middle", "data": "", "update_count": "0", "reason": ""}
+)
+
+# 単勝オッズAPIフィクスチャ（取消馬など数値変換できないオッズを含む）
+ODDS_API_RESPONSE_WITH_SCRATCH = json.dumps(
+    {
+        "status": "result",
+        "data": {
+            "official_datetime": "2026-04-27 10:00:00",
+            "odds": {
+                "1": {"01": ["5.2", "0.0", "3"], "02": ["---", "0.0", "0"]},
+            },
+        },
+        "update_count": "0",
+        "reason": "",
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # NetkeibaScraper.fetch_race_entries
 # ---------------------------------------------------------------------------
@@ -605,6 +643,52 @@ class TestNetkeibaFetchRaceEntries:
             result = await scraper.fetch_race_entries("202409010511")
         assert result["race_info"]["course_type"] == "ダート"
         assert result["race_info"]["distance"] == 1600
+
+
+# ---------------------------------------------------------------------------
+# NetkeibaScraper.fetch_odds
+# ---------------------------------------------------------------------------
+
+
+class TestNetkeibaFetchOdds:
+    """NetkeibaScraper.fetch_odds() の単勝オッズJSON APIパーステスト。"""
+
+    @pytest.mark.asyncio
+    async def test_fetch_odds_parses_zero_padded_keys_and_win_odds_only(self):
+        """ゼロ埋め馬番キーがintに変換され、複勝("2")は無視され、
+        人気順を捨てて単勝オッズのfloatのみ返ること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=ODDS_API_RESPONSE)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_odds("202604270511")
+        assert result == {1: 76.9, 13: 2.1}
+
+    @pytest.mark.asyncio
+    async def test_fetch_odds_unavailable_race_returns_empty_dict(self):
+        """未発売/存在しないレース（dataが空文字列）で空dictを返すこと。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=ODDS_API_RESPONSE_NOT_AVAILABLE)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_odds("202604270599")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_fetch_odds_malformed_json_returns_empty_dict(self):
+        """JSON破損時に空dictを返すこと。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value="{this is not valid json")
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_odds("202604270511")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_fetch_odds_skips_non_numeric_values(self):
+        """取消馬("---")等の数値変換できないオッズ要素をスキップすること。"""
+        scraper = NetkeibaScraper()
+        mock = AsyncMock(return_value=ODDS_API_RESPONSE_WITH_SCRATCH)
+        with patch.object(scraper, "fetch", new=mock):
+            result = await scraper.fetch_odds("202604270511")
+        assert result == {1: 5.2}
 
 
 # ---------------------------------------------------------------------------
@@ -980,6 +1064,31 @@ class TestFetchServicePersistence:
 
         updated_race = db.get(Race, "202312251010")
         assert updated_race.track_condition == "良"
+
+    def test_persist_odds_updates_entry_by_horse_number(self, db):
+        """_persist_odds が馬番マッチでEntry.oddsを更新し、
+        該当馬番のオッズが無いEntryはNoneのままなこと。"""
+        from app.models import Entry
+        from app.services.fetch_service import FetchService
+        from tests.factories import make_entry, make_horse, make_race
+
+        race = make_race(db, race_id="202409020511")
+        horse_a = make_horse(db, "2019105943", name="テスト馬A")
+        horse_b = make_horse(db, "2020101234", name="テスト馬B")
+        make_entry(db, race.id, horse_a.id, horse_number=1)
+        make_entry(db, race.id, horse_b.id, horse_number=2)
+
+        service = FetchService(db=db)
+        service._persist_odds(race.id, {1: 2.1})
+
+        entry_a = (
+            db.query(Entry).filter_by(race_id=race.id, horse_id=horse_a.id).first()
+        )
+        entry_b = (
+            db.query(Entry).filter_by(race_id=race.id, horse_id=horse_b.id).first()
+        )
+        assert entry_a.odds == 2.1
+        assert entry_b.odds is None
 
     def test_persist_horse_profile_updates_horse(self, db):
         """_persist_horse_profile が Horse.sire/dam/dam_sire を更新すること。"""
