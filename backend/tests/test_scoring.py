@@ -6,86 +6,19 @@ from datetime import date
 
 import pytest
 
-from app.models import Entry, Horse, Jockey, Prediction, Race, Result, Trainer
+from app.models import Horse, Prediction, Race, Result
 from app.scoring import factors
 from app.scoring.engine import ScoringEngine
+from app.scoring.factors import _position_score
 from app.scoring.weights import FACTOR_WEIGHTS
-
-
-# ---------------------------------------------------------------------------
-# テストデータヘルパー（DB版: エンジンテストで使用）
-# ---------------------------------------------------------------------------
-
-def _make_race(db, race_id="r_score_001", name="天皇賞", venue="東京",
-               distance=2000, course_type="芝", grade="G1",
-               track_condition="良", race_date=None):
-    race_date = race_date or date(2024, 4, 28)
-    race = Race(
-        id=race_id,
-        name=name,
-        date=race_date,
-        venue=venue,
-        course_type=course_type,
-        distance=distance,
-        track_condition=track_condition,
-        grade=grade,
-    )
-    db.add(race)
-    db.flush()
-    return race
-
-
-def _make_horse(db, horse_id, name="テスト馬", sire=None, dam_sire=None):
-    horse = Horse(
-        id=horse_id,
-        name=name,
-        sire=sire,
-        dam_sire=dam_sire,
-    )
-    db.add(horse)
-    db.flush()
-    return horse
-
-
-def _make_jockey(db, jockey_id="j_001", name="テスト騎手"):
-    jockey = Jockey(id=jockey_id, name=name)
-    db.add(jockey)
-    db.flush()
-    return jockey
-
-
-def _make_trainer(db, trainer_id="tr_001", name="テスト調教師"):
-    trainer = Trainer(id=trainer_id, name=name)
-    db.add(trainer)
-    db.flush()
-    return trainer
-
-
-def _make_entry(db, race_id, horse_id, jockey_id=None, trainer_id=None,
-                post_position=1, horse_number=1):
-    entry = Entry(
-        race_id=race_id,
-        horse_id=horse_id,
-        jockey_id=jockey_id,
-        trainer_id=trainer_id,
-        post_position=post_position,
-        horse_number=horse_number,
-    )
-    db.add(entry)
-    db.flush()
-    return entry
-
-
-def _make_result(db, race_id, horse_id, finish_position, last_3f=None):
-    result = Result(
-        race_id=race_id,
-        horse_id=horse_id,
-        finish_position=finish_position,
-        last_3f=last_3f,
-    )
-    db.add(result)
-    db.flush()
-    return result
+from tests.factories import (
+    make_entry as _make_entry,
+    make_horse as _make_horse,
+    make_jockey as _make_jockey,
+    make_race as _make_race,
+    make_result as _make_result,
+    make_trainer as _make_trainer,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -533,3 +466,176 @@ class TestScoreAllFactorsRange:
         result = _result("r_tc_range", finish_position=1)
         score = factors.score_track_condition([(result, race)], "重")
         assert 0.0 <= score <= 100.0
+
+
+# ---------------------------------------------------------------------------
+# _position_score エッジケーステスト
+# ---------------------------------------------------------------------------
+
+class TestPositionScore:
+    def test_position_score_first(self):
+        """1着 = 100.0"""
+        assert _position_score(1) == 100.0
+
+    def test_position_score_second(self):
+        """2着 = 85.0"""
+        assert _position_score(2) == 85.0
+
+    def test_position_score_third(self):
+        """3着 = 70.0"""
+        assert _position_score(3) == 70.0
+
+    def test_position_score_fourth(self):
+        """4着 = 55.0"""
+        assert _position_score(4) == 55.0
+
+    def test_position_score_fifth(self):
+        """5着 = 40.0"""
+        assert _position_score(5) == 40.0
+
+    def test_position_score_sixth(self):
+        """6着 = max(0, 40-5*(6-5)) = 35.0"""
+        assert _position_score(6) == pytest.approx(35.0)
+
+    def test_position_score_thirteen(self):
+        """13着 = max(0, 40-5*(13-5)) = max(0, 0) = 0.0"""
+        assert _position_score(13) == pytest.approx(0.0)
+
+    def test_position_score_eighteen(self):
+        """18着 = max(0, 40-5*(18-5)) = max(0, -25) = 0.0（下限クランプ）"""
+        assert _position_score(18) == pytest.approx(0.0)
+
+    def test_position_score_zero(self):
+        """0着（無効値）= else 分岐: max(0, 40-5*(0-5)) = 65.0（ドキュメント動作）"""
+        # pos=0 は通常存在しない無効値だが、現在の実装では else 分岐に落ちて 65.0 を返す。
+        # 将来的にバリデーションを追加する場合は本テストを更新すること。
+        assert _position_score(0) == pytest.approx(65.0)
+
+
+# ---------------------------------------------------------------------------
+# ファクターテスト: score_jockey（データあり）
+# ---------------------------------------------------------------------------
+
+class TestScoreJockeyWithData:
+    def test_score_jockey_venue_match(self):
+        """同競馬場の1着データ → NEUTRAL_SCORE より高スコア"""
+        race = _race("r_jk_v_001", venue="東京", grade="G2")
+        result = _result("r_jk_v_001", finish_position=1)
+        score = factors.score_jockey([(result, race)], "東京", "G1")
+        # venue スコアは計算されるが grade スコアは未一致→ venue スコアのみ
+        assert score > 50.0
+
+    def test_score_jockey_grade_match(self):
+        """同グレードの1着データ → NEUTRAL_SCORE より高スコア"""
+        race = _race("r_jk_g_001", venue="阪神", grade="G1")
+        result = _result("r_jk_g_001", finish_position=1)
+        score = factors.score_jockey([(result, race)], "東京", "G1")
+        # grade スコアは計算されるが venue スコアは未一致
+        assert score > 50.0
+
+    def test_score_jockey_both_match(self):
+        """同競馬場・同グレードの1着データ → 両方加算でさらに高スコア"""
+        race_v = _race("r_jk_bv_001", venue="東京", grade="G1")
+        result_v = _result("r_jk_bv_001", finish_position=1)
+        # 片方しか一致しない場合のスコア
+        score_partial = factors.score_jockey([(result_v, race_v)], "東京", "G2")
+
+        # 両方一致する場合のスコア
+        score_both = factors.score_jockey([(result_v, race_v)], "東京", "G1")
+        assert score_both >= score_partial
+
+    def test_score_jockey_low_position(self):
+        """下位着順データのみ → NEUTRAL_SCORE より低い可能性があること"""
+        race = _race("r_jk_low_001", venue="東京", grade="G1")
+        result = _result("r_jk_low_001", finish_position=10)
+        score = factors.score_jockey([(result, race)], "東京", "G1")
+        # 勝率0・連対率0・複勝率0 → スコアは低い（0に近い）
+        assert score < 50.0
+
+
+# ---------------------------------------------------------------------------
+# ファクターテスト: score_trainer（データあり）
+# ---------------------------------------------------------------------------
+
+class TestScoreTrainerWithData:
+    def test_score_trainer_venue_match(self):
+        """同競馬場の1着データ → NEUTRAL_SCORE より高スコア"""
+        race = _race("r_tr_v_001", venue="京都", grade="G3")
+        result = _result("r_tr_v_001", finish_position=1)
+        score = factors.score_trainer([(result, race)], "京都", "G1")
+        assert score > 50.0
+
+    def test_score_trainer_grade_match(self):
+        """同グレードの1着データ → NEUTRAL_SCORE より高スコア"""
+        race = _race("r_tr_g_001", venue="中山", grade="G2")
+        result = _result("r_tr_g_001", finish_position=1)
+        score = factors.score_trainer([(result, race)], "阪神", "G2")
+        assert score > 50.0
+
+    def test_score_trainer_multiple_results(self):
+        """複数成績データ → スコアが 0〜100 の範囲内であること"""
+        race1 = _race("r_tr_m_001", venue="東京", grade="G1")
+        race2 = _race("r_tr_m_002", venue="東京", grade="G1")
+        result1 = _result("r_tr_m_001", finish_position=1)
+        result2 = _result("r_tr_m_002", finish_position=5)
+        score = factors.score_trainer(
+            [(result1, race1), (result2, race2)], "東京", "G1"
+        )
+        assert 0.0 <= score <= 100.0
+
+
+# ---------------------------------------------------------------------------
+# ファクターテスト: score_bloodline（兄弟馬データあり）
+# ---------------------------------------------------------------------------
+
+class TestScoreBloodlineWithData:
+    def test_score_bloodline_sire_match(self):
+        """同父を持つ兄弟馬が同コースで好走 → NEUTRAL_SCORE より高スコア"""
+        horse = Horse(id="h_bl_sire", name="テスト馬", sire="ディープインパクト", dam_sire=None)
+        # 兄弟馬の成績（同コース・同距離・芝）
+        sire_race = _race("r_bl_s_001", venue="東京", distance=2000, course_type="芝")
+        sire_result = _result("r_bl_s_001", horse_id="h_sibling_001", finish_position=1)
+        score = factors.score_bloodline(
+            horse, [(sire_result, sire_race)], [], "東京", 2000, "芝"
+        )
+        assert score > 50.0
+
+    def test_score_bloodline_dam_sire_match(self):
+        """同母父を持つ馬が同コースで好走 → NEUTRAL_SCORE より高スコア"""
+        horse = Horse(id="h_bl_ds", name="テスト馬", sire=None, dam_sire="Storm Cat")
+        dam_race = _race("r_bl_ds_001", venue="阪神", distance=1600, course_type="芝")
+        dam_result = _result("r_bl_ds_001", horse_id="h_ds_sibling", finish_position=1)
+        score = factors.score_bloodline(
+            horse, [], [(dam_result, dam_race)], "阪神", 1600, "芝"
+        )
+        assert score > 50.0
+
+    def test_score_bloodline_wrong_venue(self):
+        """兄弟馬の成績が別コース → フィルタされて NEUTRAL_SCORE"""
+        horse = Horse(id="h_bl_venue", name="テスト馬", sire="キングカメハメハ", dam_sire=None)
+        sire_race = _race("r_bl_v_001", venue="阪神", distance=2000, course_type="芝")
+        sire_result = _result("r_bl_v_001", horse_id="h_sib_venue", finish_position=1)
+        # 東京2000を問い合わせるが兄弟馬データは阪神2000
+        score = factors.score_bloodline(
+            horse, [(sire_result, sire_race)], [], "東京", 2000, "芝"
+        )
+        assert score == 50.0
+
+    def test_score_bloodline_sire_and_dam_sire_combined(self):
+        """父・母父の両方にデータ → 0.6:0.4 合成スコア"""
+        horse = Horse(id="h_bl_both", name="テスト馬",
+                      sire="ディープインパクト", dam_sire="Storm Cat")
+        race = _race("r_bl_both_001", venue="東京", distance=2400, course_type="芝")
+        sire_result = _result("r_bl_both_001", horse_id="h_sib_s", finish_position=1)
+        ds_result = _result("r_bl_both_001", horse_id="h_sib_ds", finish_position=1)
+
+        score_sire_only = factors.score_bloodline(
+            horse, [(sire_result, race)], [], "東京", 2400, "芝"
+        )
+        score_both = factors.score_bloodline(
+            horse, [(sire_result, race)], [(ds_result, race)], "東京", 2400, "芝"
+        )
+        # 両方合成でも範囲内
+        assert 0.0 <= score_both <= 100.0
+        # 父スコアと大きく外れないこと（0.6係数で重み付けされた合成）
+        assert abs(score_both - score_sire_only) < 50.0

@@ -4,51 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.models import Horse, Prediction, Race
-
-
-# ---------------------------------------------------------------------------
-# ヘルパー関数
-# ---------------------------------------------------------------------------
-
-def _make_race(db, race_id="r_api_001", name="テストレース", venue="東京",
-               course_type="芝", distance=2000, grade="G1",
-               race_date=None, weather="晴", track_condition="良"):
-    race_date = race_date or date(2024, 4, 28)
-    race = Race(
-        id=race_id,
-        name=name,
-        date=race_date,
-        venue=venue,
-        course_type=course_type,
-        distance=distance,
-        weather=weather,
-        track_condition=track_condition,
-        grade=grade,
-    )
-    db.add(race)
-    db.flush()
-    return race
-
-
-def _make_horse(db, horse_id, name="テスト馬"):
-    horse = Horse(id=horse_id, name=name)
-    db.add(horse)
-    db.flush()
-    return horse
-
-
-def _make_prediction(db, race_id, horse_id, rank=1, total_score=80.0, score_details=None):
-    pred = Prediction(
-        race_id=race_id,
-        horse_id=horse_id,
-        rank=rank,
-        total_score=total_score,
-        score_details=score_details or {},
-    )
-    db.add(pred)
-    db.flush()
-    return pred
+from tests.factories import make_horse as _make_horse, make_prediction as _make_prediction, make_race as _make_race
 
 
 # ---------------------------------------------------------------------------

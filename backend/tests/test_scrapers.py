@@ -411,6 +411,36 @@ async def test_weather_client_unknown_venue_returns_default():
     assert result["weather"] == "不明"
 
 
+def test_weather_client_successful_api_response():
+    """HTTPレスポンスをモックして晴れ天気データが正しく変換されること"""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    api_response_json = {
+        "weather": [{"main": "Clear", "description": "clear sky"}],
+        "main": {"temp": 22.5, "humidity": 40},
+    }
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = api_response_json
+    mock_response.raise_for_status = MagicMock()
+
+    mock_async_client = AsyncMock()
+    mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+    mock_async_client.__aexit__ = AsyncMock(return_value=False)
+    mock_async_client.get = AsyncMock(return_value=mock_response)
+
+    client = WeatherClient(api_key="test_api_key_12345")
+
+    with patch("httpx.AsyncClient", return_value=mock_async_client):
+        result = asyncio.run(client.get_weather("東京"))
+
+    assert result["weather"] == "晴れ"
+    assert result["temp"] == pytest.approx(22.5)
+    assert result["humidity"] == 40
+    assert result["description"] == "clear sky"
+
+
 # ---------------------------------------------------------------------------
 # JraScraper.fetch_graded_races
 # ---------------------------------------------------------------------------
