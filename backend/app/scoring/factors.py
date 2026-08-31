@@ -310,8 +310,14 @@ def score_bloodline(
         top2 = sum(1 for r in results_list if r.finish_position <= 2)
         return _clamp(wins / total * 60.0 + top2 / total * 40.0)
 
-    sire_score = calc_bloodline_score(filter_course(sire_results)) if horse.sire else None
-    dam_sire_score = calc_bloodline_score(filter_course(dam_sire_results)) if horse.dam_sire else None
+    sire_score = (
+        calc_bloodline_score(filter_course(sire_results)) if horse.sire else None
+    )
+    dam_sire_score = (
+        calc_bloodline_score(filter_course(dam_sire_results))
+        if horse.dam_sire
+        else None
+    )
 
     if sire_score is not None and dam_sire_score is not None:
         return _clamp(sire_score * 0.6 + dam_sire_score * 0.4)

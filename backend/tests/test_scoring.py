@@ -13,13 +13,22 @@ from app.scoring.factors import _position_score
 from app.scoring.weights import FACTOR_WEIGHTS
 from tests.factories import (
     make_entry as _make_entry,
+)
+from tests.factories import (
     make_horse as _make_horse,
+)
+from tests.factories import (
     make_jockey as _make_jockey,
+)
+from tests.factories import (
     make_race as _make_race,
+)
+from tests.factories import (
     make_result as _make_result,
+)
+from tests.factories import (
     make_trainer as _make_trainer,
 )
-
 
 # ---------------------------------------------------------------------------
 # インメモリ用ヘルパー（ファクター純粋ユニットテストで使用）
@@ -194,7 +203,9 @@ class TestScoringEngine:
         race = _make_race(db, "r_eng_001", name="エンジンテストレース",
                           venue="東京", distance=2000, course_type="芝",
                           grade="G1", track_condition="良")
-        horse1 = _make_horse(db, "h_eng_001", name="テスト馬A", sire="ディープインパクト")
+        horse1 = _make_horse(
+            db, "h_eng_001", name="テスト馬A", sire="ディープインパクト",
+        )
         horse2 = _make_horse(db, "h_eng_002", name="テスト馬B")
         horse3 = _make_horse(db, "h_eng_003", name="テスト馬C")
 
@@ -230,7 +241,9 @@ class TestScoringEngine:
             assert "score" in detail, f"{factor_name}: 'score' キーなし"
             assert "label" in detail, f"{factor_name}: 'label' キーなし"
             assert "weighted" in detail, f"{factor_name}: 'weighted' キーなし"
-            assert 0.0 <= detail["score"] <= 100.0, f"{factor_name}: スコアが0〜100範囲外"
+            assert 0.0 <= detail["score"] <= 100.0, (
+                f"{factor_name}: スコアが0〜100範囲外"
+            )
 
         # total_score は非負
         assert result["total_score"] >= 0.0
@@ -293,11 +306,15 @@ class TestScoringEngine:
 
         # 1回目
         engine.predict_race(race.id)
-        count_after_first = db.query(Prediction).filter(Prediction.race_id == race.id).count()
+        count_after_first = (
+            db.query(Prediction).filter(Prediction.race_id == race.id).count()
+        )
 
         # 2回目
         engine.predict_race(race.id)
-        count_after_second = db.query(Prediction).filter(Prediction.race_id == race.id).count()
+        count_after_second = (
+            db.query(Prediction).filter(Prediction.race_id == race.id).count()
+        )
 
         # 重複なく同じ件数
         assert count_after_first == count_after_second == 3
@@ -422,7 +439,9 @@ class TestScoreBloodlineNoData:
 
     def test_score_bloodline_no_siblings(self):
         """同じ父を持つ兄弟馬の成績なし → 50.0 を返す"""
-        horse = Horse(id="h_bl_alone", name="孤独馬", sire="ユニーク種牡馬XYZ", dam_sire=None)
+        horse = Horse(
+            id="h_bl_alone", name="孤独馬", sire="ユニーク種牡馬XYZ", dam_sire=None,
+        )
         score = factors.score_bloodline(horse, [], [], "東京", 2000, "芝")
         assert score == 50.0
 
@@ -562,8 +581,8 @@ class TestPositionScore:
 
     def test_position_score_zero(self):
         """0着（無効値）= else 分岐: max(0, 40-5*(0-5)) = 65.0（ドキュメント動作）"""
-        # pos=0 は通常存在しない無効値だが、現在の実装では else 分岐に落ちて 65.0 を返す。
-        # 将来的にバリデーションを追加する場合は本テストを更新すること。
+        # pos=0 は通常存在しない無効値だが、現在の実装では else 分岐に落ちて
+        # 65.0 を返す。将来的にバリデーションを追加する場合は本テストを更新すること。
         assert _position_score(0) == pytest.approx(65.0)
 
 
@@ -646,7 +665,9 @@ class TestScoreTrainerWithData:
 class TestScoreBloodlineWithData:
     def test_score_bloodline_sire_match(self):
         """同父を持つ兄弟馬が同コースで好走 → NEUTRAL_SCORE より高スコア"""
-        horse = Horse(id="h_bl_sire", name="テスト馬", sire="ディープインパクト", dam_sire=None)
+        horse = Horse(
+            id="h_bl_sire", name="テスト馬", sire="ディープインパクト", dam_sire=None,
+        )
         # 兄弟馬の成績（同コース・同距離・芝）
         sire_race = _race("r_bl_s_001", venue="東京", distance=2000, course_type="芝")
         sire_result = _result("r_bl_s_001", horse_id="h_sibling_001", finish_position=1)
@@ -667,7 +688,9 @@ class TestScoreBloodlineWithData:
 
     def test_score_bloodline_wrong_venue(self):
         """兄弟馬の成績が別コース → フィルタされて NEUTRAL_SCORE"""
-        horse = Horse(id="h_bl_venue", name="テスト馬", sire="キングカメハメハ", dam_sire=None)
+        horse = Horse(
+            id="h_bl_venue", name="テスト馬", sire="キングカメハメハ", dam_sire=None,
+        )
         sire_race = _race("r_bl_v_001", venue="阪神", distance=2000, course_type="芝")
         sire_result = _result("r_bl_v_001", horse_id="h_sib_venue", finish_position=1)
         # 東京2000を問い合わせるが兄弟馬データは阪神2000

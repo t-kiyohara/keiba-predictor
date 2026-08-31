@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from tests.factories import make_horse as _make_horse, make_race as _make_race, make_result as _make_result
-
+from tests.factories import make_horse as _make_horse
+from tests.factories import make_race as _make_race
+from tests.factories import make_result as _make_result
 
 # ---------------------------------------------------------------------------
 # GET /api/horses/{horse_id}

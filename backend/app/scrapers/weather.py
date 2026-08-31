@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import httpx
 
-
 VENUE_COORDINATES: dict[str, tuple[float, float]] = {
     "東京": (35.6644, 139.4815),    # 府中
     "中山": (35.7297, 139.9582),

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.models import Entry, Horse, Jockey, Race, Result, Trainer
-
 
 # ---------------------------------------------------------------------------
 # seed() の内部ロジックを直接テストするためのヘルパー

@@ -11,12 +11,9 @@ from contextlib import contextmanager
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from app.models import Entry, Horse, Prediction, Race
 from app.services.fetch_service import FetchService
 from tests.factories import make_entry, make_horse, make_race
-
 
 # ---------------------------------------------------------------------------
 # テスト用定数
@@ -147,7 +144,9 @@ class TestFetchServiceFallback:
         service = FetchService(db)
         with (
             patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
-            patch.object(service.jra, "fetch_graded_races", new=AsyncMock(return_value=[])),
+            patch.object(
+                service.jra, "fetch_graded_races", new=AsyncMock(return_value=[]),
+            ),
             patch.object(
                 service.netkeiba, "fetch_race_list_by_date",
                 new=AsyncMock(return_value=[]),
@@ -165,7 +164,9 @@ class TestFetchServiceFallback:
         service = FetchService(db)
         with (
             patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
-            patch.object(service.jra, "fetch_graded_races", new=AsyncMock(return_value=[])),
+            patch.object(
+                service.jra, "fetch_graded_races", new=AsyncMock(return_value=[]),
+            ),
             patch.object(
                 service.netkeiba, "fetch_race_list_by_date",
                 new=AsyncMock(return_value=[]),
@@ -277,7 +278,9 @@ class TestFetchServiceFullPipeline:
 
         with (
             patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
-            patch.object(service.jra, "fetch_graded_races", new=AsyncMock(return_value=[])),
+            patch.object(
+                service.jra, "fetch_graded_races", new=AsyncMock(return_value=[]),
+            ),
             patch.object(
                 service.netkeiba, "fetch_race_list_by_date",
                 new=AsyncMock(return_value=[]),
@@ -288,5 +291,5 @@ class TestFetchServiceFullPipeline:
         # 少なくとも 2 ステップ（日程取得 + レース一覧）の progress が呼ばれること
         assert len(progress_calls) >= 2
         # 全ステップの total は TOTAL_STEPS = 7
-        for _, current, total in progress_calls:
+        for _, _current, total in progress_calls:
             assert total == FetchService.TOTAL_STEPS

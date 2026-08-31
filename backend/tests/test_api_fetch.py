@@ -49,7 +49,10 @@ class TestGetProgress:
         assert data["status"] in {"idle", "running", "completed", "error"}
 
     def test_get_progress_status_idle_after_reset(self, client):
-        """fetch router の _progress が idle にリセットされていること(autouse fixture)"""
+        """fetch router の _progress が idle にリセットされていること
+
+        (autouse fixture)
+        """
         response = client.get("/api/fetch/progress")
         assert response.status_code == 200
         data = response.json()

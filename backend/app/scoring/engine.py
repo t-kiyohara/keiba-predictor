@@ -41,7 +41,9 @@ class ScoringEngine:
             {
                 "total_score": 75.5,
                 "factor_scores": {
-                    "recent_form": {"score": 80.0, "label": "近走成績", "weighted": 16.0},
+                    "recent_form": {
+                        "score": 80.0, "label": "近走成績", "weighted": 16.0,
+                    },
                     ...
                 }
             }
@@ -84,7 +86,10 @@ class ScoringEngine:
 
         Returns:
             [
-                {"rank": 1, "horse_id": "...", "horse_name": "...", "total_score": 82.3, "factor_scores": {...}},
+                {
+                    "rank": 1, "horse_id": "...", "horse_name": "...",
+                    "total_score": 82.3, "factor_scores": {...},
+                },
                 ...
             ]
         """
@@ -112,7 +117,9 @@ class ScoringEngine:
                 all_race_ids.add(r.race_id)
         race_last3f = self._load_race_last3f(all_race_ids)
         jockey_results_map = self._load_jockey_results(jockey_ids) if jockey_ids else {}
-        trainer_results_map = self._load_trainer_results(trainer_ids) if trainer_ids else {}
+        trainer_results_map = (
+            self._load_trainer_results(trainer_ids) if trainer_ids else {}
+        )
 
         # 血統別プリロード（sire/dam_sire ごとに全兄弟馬の結果をまとめる）
         sire_results_map, dam_sire_results_map = self._load_bloodline_results_bulk(
@@ -124,10 +131,22 @@ class ScoringEngine:
         for entry in entries:
             horse = horses_map.get(entry.horse_id)
             horse_results = horse_results_map.get(entry.horse_id, [])
-            jockey_results = jockey_results_map.get(entry.jockey_id, []) if entry.jockey_id else []
-            trainer_results = trainer_results_map.get(entry.trainer_id, []) if entry.trainer_id else []
-            sire_results = sire_results_map.get(horse.sire, []) if horse and horse.sire else []
-            dam_sire_results = dam_sire_results_map.get(horse.dam_sire, []) if horse and horse.dam_sire else []
+            jockey_results = (
+                jockey_results_map.get(entry.jockey_id, []) if entry.jockey_id else []
+            )
+            trainer_results = (
+                trainer_results_map.get(entry.trainer_id, [])
+                if entry.trainer_id
+                else []
+            )
+            sire_results = (
+                sire_results_map.get(horse.sire, []) if horse and horse.sire else []
+            )
+            dam_sire_results = (
+                dam_sire_results_map.get(horse.dam_sire, [])
+                if horse and horse.dam_sire
+                else []
+            )
 
             score_result = self._score_horse(
                 horse=horse,
@@ -201,7 +220,9 @@ class ScoringEngine:
         }
 
         result_count = len(horse_results)
-        penalty = 1.0 if result_count >= MIN_RACES_FOR_FULL_SCORE else DATA_SHORTAGE_PENALTY
+        penalty = (
+            1.0 if result_count >= MIN_RACES_FOR_FULL_SCORE else DATA_SHORTAGE_PENALTY
+        )
 
         total_score = 0.0
         factor_scores = {}
@@ -235,7 +256,8 @@ class ScoringEngine:
             .join(Race, Result.race_id == Race.id)
             .filter(Result.horse_id.in_(horse_ids))
             .filter(Result.finish_position.isnot(None))
-            .order_by(Race.date.desc(), Race.id.desc())  # Race.id で同日内の順序を安定化
+            # Race.id で同日内の順序を安定化
+            .order_by(Race.date.desc(), Race.id.desc())
             .all()
         )
         result_map: dict[str, list[tuple]] = defaultdict(list)

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from tests.factories import make_horse as _make_horse, make_prediction as _make_prediction, make_race as _make_race
-
+from tests.factories import make_horse as _make_horse
+from tests.factories import make_prediction as _make_prediction
+from tests.factories import make_race as _make_race
 
 # ---------------------------------------------------------------------------
 # GET /api/races
@@ -150,8 +151,12 @@ class TestGetRacePredictions:
         """レスポンスのキーが frontend/src/types/index.ts の Prediction 型と一致する"""
         race = _make_race(db, "r_pred_keys", name="キーテストレース")
         horse = _make_horse(db, "h_pred_keys", name="キーテスト馬")
-        _make_prediction(db, race.id, horse.id, rank=1, total_score=70.0,
-                         score_details={"recent_form": {"score": 80.0, "label": "近走", "weighted": 16.0}})
+        _make_prediction(
+            db, race.id, horse.id, rank=1, total_score=70.0,
+            score_details={
+                "recent_form": {"score": 80.0, "label": "近走", "weighted": 16.0},
+            },
+        )
 
         response = client.get(f"/api/races/{race.id}/predictions")
         assert response.status_code == 200
@@ -159,5 +164,7 @@ class TestGetRacePredictions:
         assert len(data) == 1
         pred = data[0]
         # frontend/src/types/index.ts の Prediction interface と一致するキーを検証
-        expected_keys = {"rank", "horse_id", "horse_name", "total_score", "factor_scores"}
+        expected_keys = {
+            "rank", "horse_id", "horse_name", "total_score", "factor_scores",
+        }
         assert set(pred.keys()) == expected_keys
