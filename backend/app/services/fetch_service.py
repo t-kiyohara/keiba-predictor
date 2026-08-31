@@ -9,7 +9,7 @@ from app.config import settings
 from app.models import Entry, Horse, Jockey, Race, Result, Trainer
 from app.scoring.engine import ScoringEngine
 from app.scrapers.jra import JraScraper, get_target_race_dates
-from app.scrapers.netkeiba import NetkeibaScraper, venue_from_race_id
+from app.scrapers.netkeiba import NetkeibaScraper, _normalize_grade, venue_from_race_id
 from app.scrapers.weather import WeatherClient
 
 logger = logging.getLogger(__name__)
@@ -483,7 +483,8 @@ class FetchService:
                 continue
 
             # 参照先Raceが存在しない場合はスタブRaceを作成（seed.pyのパターン）
-            if self.db.get(Race, race_id) is None:
+            existing_race = self.db.get(Race, race_id)
+            if existing_race is None:
                 date_str = res.get("date", "")
                 stub_date = date(2024, 1, 1)
                 if date_str:
@@ -501,10 +502,14 @@ class FetchService:
                     venue=res.get("venue") or "不明",
                     course_type=res.get("course_type") or "芝",
                     distance=res.get("distance") or 2000,
-                    grade="OP",
+                    grade=_normalize_grade(res.get("race_name") or "") or "OP",
+                    track_condition=res.get("track_condition") or None,
                 )
                 self.db.add(stub_race)
                 self.db.flush()
+            elif existing_race.track_condition is None and res.get("track_condition"):
+                # 既存Raceに馬場状態が未設定なら成績データで埋める（上書きはしない）
+                existing_race.track_condition = res["track_condition"]
 
             # Resultのupsert（race_id + horse_id でユニーク）
             existing = (
@@ -522,6 +527,7 @@ class FetchService:
                     finish_position=res.get("finish_position"),
                     time=res.get("time"),
                     last_3f=last_3f,
+                    jockey_name=res.get("jockey_name") or None,
                 )
                 self.db.add(new_result)
 

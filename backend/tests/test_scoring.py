@@ -303,6 +303,61 @@ class TestScoringEngine:
         assert count_after_first == count_after_second == 3
 
 
+class TestEngineJockeyTrainerLoad:
+    """_load_jockey_results / _load_trainer_results が Result.jockey_name /
+    trainer_name 経由で成績を取得することのテスト。
+
+    過去成績（fetch_horse_results 由来の Result）は Entry を作らないため、
+    Entry⋈Result JOIN では常に0件になる構造的な問題があった。
+    """
+
+    def test_load_jockey_results_matches_by_name(self, db):
+        """Entryを作らずに Result.jockey_name のみで騎手成績が取得できること"""
+        jockey = _make_jockey(db, "j_load_001", "ロード騎手")
+        race = _make_race(db, "r_load_001", name="ロードテストレース")
+        horse = _make_horse(db, "h_load_001", name="ロード馬")
+        # Entryは作らない（過去成績はEntryを作らない構造を再現）
+        _make_result(
+            db, race.id, horse.id, finish_position=1, jockey_name="ロード騎手"
+        )
+
+        engine = ScoringEngine(db)
+        results_map = engine._load_jockey_results([jockey.id])
+
+        assert jockey.id in results_map
+        assert len(results_map[jockey.id]) == 1
+        result_row, matched_race = results_map[jockey.id][0]
+        assert matched_race.id == race.id
+        assert result_row.jockey_name == "ロード騎手"
+
+    def test_load_jockey_results_no_match_returns_empty(self, db):
+        """該当する名前のResultがない場合は空リストを返す"""
+        jockey = _make_jockey(db, "j_load_002", "無成績騎手")
+
+        engine = ScoringEngine(db)
+        results_map = engine._load_jockey_results([jockey.id])
+
+        assert results_map == {}
+
+    def test_load_trainer_results_matches_by_name(self, db):
+        """Entryを作らずに Result.trainer_name のみで調教師成績が取得できること"""
+        trainer = _make_trainer(db, "tr_load_001", "ロード調教師")
+        race = _make_race(db, "r_load_002", name="ロードテストレース2")
+        horse = _make_horse(db, "h_load_002", name="ロード馬2")
+        _make_result(
+            db, race.id, horse.id, finish_position=2, trainer_name="ロード調教師"
+        )
+
+        engine = ScoringEngine(db)
+        results_map = engine._load_trainer_results([trainer.id])
+
+        assert trainer.id in results_map
+        assert len(results_map[trainer.id]) == 1
+        result_row, matched_race = results_map[trainer.id][0]
+        assert matched_race.id == race.id
+        assert result_row.trainer_name == "ロード調教師"
+
+
 # ---------------------------------------------------------------------------
 # ファクターテスト: score_jockey（データなし）
 # ---------------------------------------------------------------------------

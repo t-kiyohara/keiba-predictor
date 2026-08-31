@@ -14,6 +14,8 @@ class Result(Base):
     time = Column(String, nullable=True)  # 走破タイム
     margin = Column(String, nullable=True)  # 着差
     last_3f = Column(Float, nullable=True)  # 上がり3F
+    jockey_name = Column(String, nullable=True, index=True)  # 騎手名（Entry非依存）
+    trainer_name = Column(String, nullable=True, index=True)  # 調教師名（後続WPで導入）
 
     race = relationship("Race", back_populates="results")
     horse = relationship("Horse", back_populates="results")

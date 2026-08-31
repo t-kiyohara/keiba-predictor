@@ -73,6 +73,8 @@ def make_result(
     time: str | None = None,
     last_3f: float | None = None,
     margin: str | None = None,
+    jockey_name: str | None = None,
+    trainer_name: str | None = None,
 ) -> Result:
     """Result を生成して DB に追加する"""
     result = Result(
@@ -82,6 +84,8 @@ def make_result(
         time=time,
         last_3f=last_3f,
         margin=margin,
+        jockey_name=jockey_name,
+        trainer_name=trainer_name,
     )
     db.add(result)
     db.flush()

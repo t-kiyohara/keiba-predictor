@@ -853,6 +853,10 @@ class TestFetchServicePersistence:
         stub_race = db.get(Race, "202312251010")
         assert stub_race is not None
         assert stub_race.name == "有馬記念"
+        # レース名にグレード表記がないためOPのまま
+        assert stub_race.grade == "OP"
+        # 成績データのtrack_conditionがスタブRaceに設定されること
+        assert stub_race.track_condition == "良"
 
         # Resultが作成されること
         result_row = db.query(Result).filter_by(
@@ -860,6 +864,122 @@ class TestFetchServicePersistence:
         ).first()
         assert result_row is not None
         assert result_row.finish_position == 3
+        # 成績データのjockey_nameがResultに保存されること
+        assert result_row.jockey_name == "テスト騎手A"
+
+    def test_persist_horse_results_extracts_grade_from_race_name(self, db):
+        """_persist_horse_results がレース名からグレードを抽出して
+        スタブRaceのgradeに設定すること（OP固定をやめた挙動）。"""
+        from app.models import Horse, Race
+        from app.services.fetch_service import FetchService
+
+        horse = Horse(id="2019105943", name="テスト馬A")
+        db.add(horse)
+        db.flush()
+
+        service = FetchService(db=db)
+        results = [
+            {
+                "race_id": "202312251099",
+                "race_name": "KBSファンタジーS(GⅢ)",
+                "date": "2023-12-25",
+                "venue": "中山",
+                "distance": 1800,
+                "course_type": "芝",
+                "track_condition": "稍重",
+                "finish_position": 2,
+                "time": "1:47.5",
+                "last_3f": 34.2,
+                "jockey_name": "テスト騎手Z",
+            }
+        ]
+        service._persist_horse_results("2019105943", results)
+
+        stub_race = db.get(Race, "202312251099")
+        assert stub_race is not None
+        assert stub_race.grade == "G3"
+
+    def test_persist_horse_results_backfills_missing_track_condition(self, db):
+        """既存Raceのtrack_conditionがNoneの場合、成績データの値で埋めること。"""
+        from app.models import Horse, Race
+        from app.services.fetch_service import FetchService
+
+        horse = Horse(id="2019105943", name="テスト馬A")
+        race = Race(
+            id="202312251010",
+            name="有馬記念",
+            date=date(2023, 12, 25),
+            venue="中山",
+            course_type="芝",
+            distance=2500,
+            grade="G1",
+            track_condition=None,
+        )
+        db.add_all([horse, race])
+        db.flush()
+
+        service = FetchService(db=db)
+        results = [
+            {
+                "race_id": "202312251010",
+                "race_name": "有馬記念",
+                "date": "2023-12-25",
+                "venue": "中山",
+                "distance": 2500,
+                "course_type": "芝",
+                "track_condition": "重",
+                "finish_position": 5,
+                "time": "2:33.0",
+                "last_3f": 36.0,
+                "jockey_name": "テスト騎手A",
+            }
+        ]
+        service._persist_horse_results("2019105943", results)
+
+        updated_race = db.get(Race, "202312251010")
+        assert updated_race.track_condition == "重"
+
+    def test_persist_horse_results_does_not_overwrite_existing_track_condition(
+        self, db
+    ):
+        """既存Raceのtrack_conditionが既に設定されている場合は上書きしないこと。"""
+        from app.models import Horse, Race
+        from app.services.fetch_service import FetchService
+
+        horse = Horse(id="2019105943", name="テスト馬A")
+        race = Race(
+            id="202312251010",
+            name="有馬記念",
+            date=date(2023, 12, 25),
+            venue="中山",
+            course_type="芝",
+            distance=2500,
+            grade="G1",
+            track_condition="良",
+        )
+        db.add_all([horse, race])
+        db.flush()
+
+        service = FetchService(db=db)
+        results = [
+            {
+                "race_id": "202312251010",
+                "race_name": "有馬記念",
+                "date": "2023-12-25",
+                "venue": "中山",
+                "distance": 2500,
+                "course_type": "芝",
+                "track_condition": "重",
+                "finish_position": 5,
+                "time": "2:33.0",
+                "last_3f": 36.0,
+                "jockey_name": "テスト騎手A",
+            }
+        ]
+        service._persist_horse_results("2019105943", results)
+
+        updated_race = db.get(Race, "202312251010")
+        assert updated_race.track_condition == "良"
 
     def test_persist_horse_profile_updates_horse(self, db):
         """_persist_horse_profile が Horse.sire/dam/dam_sire を更新すること。"""

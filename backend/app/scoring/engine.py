@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from app.models import Entry, Horse, Prediction, Race, Result
+from app.models import Entry, Horse, Jockey, Prediction, Race, Result, Trainer
 from app.scoring import factors
 from app.scoring.weights import (
     DATA_SHORTAGE_PENALTY,
@@ -264,49 +264,64 @@ class ScoringEngine:
     def _load_jockey_results(
         self, jockey_ids: list[str]
     ) -> dict[str, list[tuple]]:
-        """複数騎手の全成績を一括取得（jockey_id → [(Result, Race)]）"""
+        """複数騎手の全成績を一括取得（jockey_id → [(Result, Race)]）
+
+        過去成績（Result）はEntryを作らないため、Entry⋈Resultでは
+        常に0件になる。Jockey.nameでResult.jockey_nameとマッチングする。
+        # ponytail: 同姓同名の騎手は成績が混在しうるが、JRA現役では実質衝突しない
+        """
         if not jockey_ids:
             return {}
+        jockeys = self.db.query(Jockey).filter(Jockey.id.in_(jockey_ids)).all()
+        name_to_ids: dict[str, list[str]] = defaultdict(list)
+        for jockey in jockeys:
+            name_to_ids[jockey.name].append(jockey.id)
+        if not name_to_ids:
+            return {}
+
         rows = (
-            self.db.query(Entry.jockey_id, Result, Race)
-            .join(
-                Result,
-                (Entry.race_id == Result.race_id)
-                & (Entry.horse_id == Result.horse_id),
-            )
+            self.db.query(Result, Race)
             .join(Race, Result.race_id == Race.id)
-            .filter(Entry.jockey_id.in_(jockey_ids))
+            .filter(Result.jockey_name.in_(name_to_ids.keys()))
             .filter(Result.finish_position.isnot(None))
-            .distinct()
             .all()
         )
         result_map: dict[str, list[tuple]] = defaultdict(list)
-        for jockey_id, r, race in rows:
-            result_map[jockey_id].append((r, race))
+        for r, race in rows:
+            for jockey_id in name_to_ids.get(r.jockey_name, []):
+                result_map[jockey_id].append((r, race))
         return dict(result_map)
 
     def _load_trainer_results(
         self, trainer_ids: list[str]
     ) -> dict[str, list[tuple]]:
-        """複数調教師の全成績を一括取得（trainer_id → [(Result, Race)]）"""
+        """複数調教師の全成績を一括取得（trainer_id → [(Result, Race)]）
+
+        Jockey同様、Trainer.nameでResult.trainer_nameとマッチングする。
+        Result.trainer_nameは後続WPのレース結果スクレイパーが埋めるまで
+        常に空のため、現時点では0件を返す構造になる。
+        # ponytail: 同姓同名の調教師は成績が混在しうるが、JRA現役では実質衝突しない
+        """
         if not trainer_ids:
             return {}
+        trainers = self.db.query(Trainer).filter(Trainer.id.in_(trainer_ids)).all()
+        name_to_ids: dict[str, list[str]] = defaultdict(list)
+        for trainer in trainers:
+            name_to_ids[trainer.name].append(trainer.id)
+        if not name_to_ids:
+            return {}
+
         rows = (
-            self.db.query(Entry.trainer_id, Result, Race)
-            .join(
-                Result,
-                (Entry.race_id == Result.race_id)
-                & (Entry.horse_id == Result.horse_id),
-            )
+            self.db.query(Result, Race)
             .join(Race, Result.race_id == Race.id)
-            .filter(Entry.trainer_id.in_(trainer_ids))
+            .filter(Result.trainer_name.in_(name_to_ids.keys()))
             .filter(Result.finish_position.isnot(None))
-            .distinct()
             .all()
         )
         result_map: dict[str, list[tuple]] = defaultdict(list)
-        for trainer_id, r, race in rows:
-            result_map[trainer_id].append((r, race))
+        for r, race in rows:
+            for trainer_id in name_to_ids.get(r.trainer_name, []):
+                result_map[trainer_id].append((r, race))
         return dict(result_map)
 
     def _load_bloodline_results(
