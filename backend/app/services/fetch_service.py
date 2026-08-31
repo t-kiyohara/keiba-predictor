@@ -61,6 +61,7 @@ class FetchService:
             estimated_remaining=total_races * 30,
         )
         races = await self._step_fetch_entries(graded_races)
+        self.db.commit()
 
         # ステップ4: 馬プロフィールを取得・永続化
         horse_ids = self._collect_horse_ids(races)
@@ -90,6 +91,7 @@ class FetchService:
             "レース当日の天気を取得中...",
         )
         await self._step_fetch_weather(races)
+        self.db.commit()
 
         # ステップ7: スコアリングを実行
         self.progress(
@@ -215,6 +217,8 @@ class FetchService:
             profile = await self.netkeiba.fetch_horse_profile(horse_id)
             if profile:
                 self._persist_horse_profile(profile)
+            # 途中で例外が起きても取得済み分を失わないよう馬ごとにcommitする
+            self.db.commit()
 
     async def _step_fetch_results(
         self, horse_ids: list[str]
@@ -231,6 +235,8 @@ class FetchService:
             results = await self.netkeiba.fetch_horse_results(horse_id)
             if results:
                 self._persist_horse_results(horse_id, results)
+            # 途中で例外が起きても取得済み分を失わないよう馬ごとにcommitする
+            self.db.commit()
 
     async def _step_fetch_weather(
         self, races: list[Race]
@@ -271,36 +277,14 @@ class FetchService:
 
     def _run_fallback_scoring(self) -> None:
         """重賞レースが見つからない場合の既存DBデータでのスコアリング"""
-        self.progress(
-            "レース一覧",
-            2,
-            self.TOTAL_STEPS,
-            "重賞レースが見つかりませんでした（スクレイパー未実装）",
+        not_found_message = (
+            "対象期間に重賞レースが見つかりませんでした。既存データで再スコアリングします"
         )
-        self.progress(
-            "出走馬取得",
-            3,
-            self.TOTAL_STEPS,
-            "スクレイパー未実装のためスキップします",
-        )
-        self.progress(
-            "馬情報取得",
-            4,
-            self.TOTAL_STEPS,
-            "スクレイパー未実装のためスキップします",
-        )
-        self.progress(
-            "成績取得",
-            5,
-            self.TOTAL_STEPS,
-            "スクレイパー未実装のためスキップします",
-        )
-        self.progress(
-            "天気取得",
-            6,
-            self.TOTAL_STEPS,
-            "スクレイパー未実装のためスキップします",
-        )
+        self.progress("レース一覧", 2, self.TOTAL_STEPS, not_found_message)
+        self.progress("出走馬取得", 3, self.TOTAL_STEPS, not_found_message)
+        self.progress("馬情報取得", 4, self.TOTAL_STEPS, not_found_message)
+        self.progress("成績取得", 5, self.TOTAL_STEPS, not_found_message)
+        self.progress("天気取得", 6, self.TOTAL_STEPS, not_found_message)
         self.progress(
             "スコアリング",
             7,
