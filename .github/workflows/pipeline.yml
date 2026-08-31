@@ -33,6 +33,8 @@ permissions:
 
 jobs:
   pipeline:
+    # bot の data コミットによる push は再デプロイ不要(スケジュール実行側で配信済み)
+    if: ${{ !(github.event_name == 'push' && github.actor == 'github-actions[bot]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment:
