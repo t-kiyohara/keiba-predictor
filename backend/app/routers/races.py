@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Horse, Prediction, Race
 from app.schemas import PredictionOut, RaceOut
+from app.scoring.engine import latest_prediction_batch
 
 router = APIRouter(prefix="/api/races", tags=["races"])
 
@@ -25,7 +26,10 @@ def get_race(race_id: str, db: Session = Depends(get_db)):
 
 @router.get("/{race_id}/predictions", response_model=list[PredictionOut])
 def get_race_predictions(race_id: str, db: Session = Depends(get_db)):
-    """レースの予想結果を返す（スコア降順）"""
+    """レースの最新予想バッチを返す（スコア降順）
+
+    予想は履歴として蓄積されるため、最新の created_at を持つバッチのみを返す。
+    """
     race = db.get(Race, race_id)
     if race is None:
         raise HTTPException(status_code=404, detail="Race not found")
@@ -34,17 +38,17 @@ def get_race_predictions(race_id: str, db: Session = Depends(get_db)):
         db.query(Prediction, Horse)
         .join(Horse, Prediction.horse_id == Horse.id)
         .filter(Prediction.race_id == race_id)
-        .order_by(Prediction.rank)
         .all()
     )
+    horse_name_by_id = {horse.id: horse.name for _, horse in rows}
 
     return [
         PredictionOut(
             rank=pred.rank,
             horse_id=pred.horse_id,
-            horse_name=horse.name,
+            horse_name=horse_name_by_id[pred.horse_id],
             total_score=pred.total_score,
             factor_scores=pred.score_details or {},
         )
-        for pred, horse in rows
+        for pred in latest_prediction_batch(pred for pred, _ in rows)
     ]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from tests.factories import make_horse as _make_horse
 from tests.factories import make_prediction as _make_prediction
@@ -146,6 +146,30 @@ class TestGetRacePredictions:
         data = response.json()
         assert data[0]["horse_name"] == "サンプル馬"
         assert data[0]["horse_id"] == horse.id
+
+    def test_get_predictions_returns_latest_batch_only(self, client, db):
+        """予想が履歴として複数バッチある場合、最新バッチのみが返ること"""
+        race = _make_race(db, "r_pred_batch", name="複数バッチレース")
+        horse1 = _make_horse(db, "h_pred_batch_001", name="旧予想1位")
+        horse2 = _make_horse(db, "h_pred_batch_002", name="新予想1位")
+        old_batch_at = datetime(2024, 4, 26, 10, 0)
+        new_batch_at = datetime(2024, 4, 27, 10, 0)
+        _make_prediction(db, race.id, horse1.id, rank=1, total_score=90.0,
+                         created_at=old_batch_at)
+        _make_prediction(db, race.id, horse2.id, rank=2, total_score=70.0,
+                         created_at=old_batch_at)
+        _make_prediction(db, race.id, horse2.id, rank=1, total_score=88.0,
+                         created_at=new_batch_at)
+        _make_prediction(db, race.id, horse1.id, rank=2, total_score=60.0,
+                         created_at=new_batch_at)
+
+        response = client.get(f"/api/races/{race.id}/predictions")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert [row["rank"] for row in data] == [1, 2]
+        assert data[0]["horse_id"] == horse2.id
+        assert data[0]["total_score"] == 88.0
 
     def test_get_predictions_response_keys(self, client, db):
         """レスポンスのキーが frontend/src/types/index.ts の Prediction 型と一致する"""

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 
 from app.models import Horse, Prediction, Race, Result
 from app.scoring import factors
-from app.scoring.engine import ScoringEngine
+from app.scoring.engine import ScoringEngine, latest_prediction_batch
 from app.scoring.factors import _position_score
 from app.scoring.weights import FACTOR_WEIGHTS
 from tests.factories import (
@@ -20,6 +20,7 @@ from tests.factories import (
 from tests.factories import (
     make_jockey as _make_jockey,
 )
+from tests.factories import make_prediction
 from tests.factories import (
     make_race as _make_race,
 )
@@ -299,25 +300,76 @@ class TestScoringEngine:
         with pytest.raises(ValueError, match="Race not found"):
             engine.predict_race("nonexistent_race_id")
 
-    def test_scoring_engine_predict_race_replaces_existing(self, db):
-        """predict_race を2回呼ぶと Prediction が上書きされること"""
+    def test_scoring_engine_predict_race_keeps_history(self, db):
+        """predict_race を2回呼ぶと過去バッチが残り、2バッチ分の行になること"""
         race, horses, entries = self._setup_race_and_entries(db)
         engine = ScoringEngine(db)
 
-        # 1回目
+        # 1回目のバッチは全行が同じ created_at を持つ
         engine.predict_race(race.id)
-        count_after_first = (
-            db.query(Prediction).filter(Prediction.race_id == race.id).count()
+        first_batch = (
+            db.query(Prediction).filter(Prediction.race_id == race.id).all()
         )
+        assert len(first_batch) == 3
+        assert len({pred.created_at for pred in first_batch}) == 1
 
-        # 2回目
+        # クロック解像度に依存せず2バッチにするため1回目を1時間前にずらす
+        for prediction in first_batch:
+            prediction.created_at -= timedelta(hours=1)
+        db.flush()
+
+        # 2回目は削除せず追記される
         engine.predict_race(race.id)
-        count_after_second = (
-            db.query(Prediction).filter(Prediction.race_id == race.id).count()
+        all_predictions = (
+            db.query(Prediction).filter(Prediction.race_id == race.id).all()
         )
+        assert len(all_predictions) == 6
+        assert len({pred.created_at for pred in all_predictions}) == 2
 
-        # 重複なく同じ件数
-        assert count_after_first == count_after_second == 3
+    def test_latest_prediction_batch_returns_newest(self, db):
+        """latest_prediction_batch が最新バッチのみを rank 昇順で返すこと"""
+        race, horses, entries = self._setup_race_and_entries(db)
+        engine = ScoringEngine(db)
+
+        engine.predict_race(race.id)
+        old_batch = db.query(Prediction).filter(Prediction.race_id == race.id).all()
+        for prediction in old_batch:
+            prediction.created_at -= timedelta(days=1)
+        db.flush()
+        engine.predict_race(race.id)
+
+        all_predictions = (
+            db.query(Prediction).filter(Prediction.race_id == race.id).all()
+        )
+        batch = latest_prediction_batch(all_predictions)
+        assert len(batch) == 3
+        assert [pred.rank for pred in batch] == [1, 2, 3]
+        assert len({pred.created_at for pred in batch}) == 1
+        assert batch[0].created_at > old_batch[0].created_at
+
+    def test_latest_prediction_batch_respects_as_of(self, db):
+        """as_of を指定するとその日までに作られたバッチだけが対象になること"""
+        race = _make_race(db, "r_batch_asof", race_date=date(2024, 5, 5))
+        horse = _make_horse(db, "h_batch_asof")
+        before_race = make_prediction(
+            db, race.id, horse.id, rank=1,
+            created_at=datetime(2024, 5, 5, 9, 0),
+        )
+        make_prediction(
+            db, race.id, horse.id, rank=1,
+            created_at=datetime(2024, 5, 6, 9, 0),
+        )
+        predictions = db.query(Prediction).filter_by(race_id=race.id).all()
+
+        # レース後に作られたバッチが最新
+        assert latest_prediction_batch(predictions)[0].created_at == datetime(
+            2024, 5, 6, 9, 0
+        )
+        # as_of を渡すとレース前のバッチが選ばれる
+        batch = latest_prediction_batch(predictions, as_of=race.date)
+        assert [pred.created_at for pred in batch] == [before_race.created_at]
+        # 該当バッチが無ければ空
+        assert latest_prediction_batch(predictions, as_of=date(2024, 5, 4)) == []
 
 
 class TestEngineJockeyTrainerLoad:

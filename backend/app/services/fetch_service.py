@@ -261,8 +261,8 @@ class FetchService:
     ) -> None:
         """ステップ7: スコアリングを実行
 
-        DBに存在する全レースを対象にスコアリングする。
-        過去フェッチで蓄積されたデータも含めて再スコアリングされる。
+        DBに存在する当日以降のレースを対象にスコアリングする。
+        過去フェッチで取得済みの未確定レースも含めて再スコアリングされる。
         """
         self._score_existing_races()
 
@@ -541,9 +541,15 @@ class FetchService:
         self.db.flush()
 
     def _score_existing_races(self) -> None:
-        """DBに存在する全レースに対してスコアリングを実行"""
+        """当日以降のレースに対してスコアリングを実行
+
+        予想は履歴として保全されるため、確定済みのレースを再スコアリングすると
+        「レース前に出した予想」が後から生えて答え合わせを汚染する。
+        またフェッチのたびに全過去レース分のバッチが増えデータが肥大する。
+        対象日（get_target_race_dates）は常に当日以降なので取りこぼしはない。
+        """
         engine = ScoringEngine(self.db)
-        races = self.db.query(Race).all()
+        races = self.db.query(Race).filter(Race.date >= date.today()).all()
         for race in races:
             try:
                 engine.predict_race(race.id)

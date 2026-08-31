@@ -7,8 +7,22 @@
 from __future__ import annotations
 
 from datetime import date as DateType
+from datetime import datetime
 
-from app.models import Entry, Horse, Jockey, Prediction, Race, Result, Trainer
+from app.models import (
+    Entry,
+    Horse,
+    Jockey,
+    Payout,
+    Prediction,
+    Race,
+    Result,
+    Trainer,
+)
+
+# make_race の既定日付（2024-04-28）の前日。make_prediction の created_at 既定値。
+# 「レース前に出した予想」として答え合わせの対象になる。
+DEFAULT_PREDICTED_AT = datetime(2024, 4, 27, 12, 0)
 
 
 def make_race(
@@ -101,18 +115,42 @@ def make_prediction(
     rank: int = 1,
     total_score: float = 80.0,
     score_details: dict | None = None,
+    created_at: datetime | None = None,
 ) -> Prediction:
-    """Prediction を生成して DB に追加する"""
+    """Prediction を生成して DB に追加する
+
+    同じ created_at を渡した行が1つの予想バッチになる。
+    """
     pred = Prediction(
         race_id=race_id,
         horse_id=horse_id,
         rank=rank,
         total_score=total_score,
         score_details=score_details or {},
+        created_at=created_at or DEFAULT_PREDICTED_AT,
     )
     db.add(pred)
     db.flush()
     return pred
+
+
+def make_payout(
+    db,
+    race_id: str,
+    bet_type: str = "単勝",
+    combination: str = "1",
+    amount: int = 300,
+) -> Payout:
+    """Payout を生成して DB に追加する（amount は100円あたりの払戻金）"""
+    payout = Payout(
+        race_id=race_id,
+        bet_type=bet_type,
+        combination=combination,
+        amount=amount,
+    )
+    db.add(payout)
+    db.flush()
+    return payout
 
 
 def make_jockey(

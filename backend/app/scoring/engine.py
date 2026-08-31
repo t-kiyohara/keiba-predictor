@@ -1,6 +1,8 @@
 """スコアリングエンジン"""
 
 from collections import defaultdict
+from collections.abc import Iterable
+from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,37 @@ from app.scoring.weights import (
     FACTOR_WEIGHTS,
     MIN_RACES_FOR_FULL_SCORE,
 )
+
+
+def latest_prediction_batch(
+    predictions: Iterable[Prediction], as_of: date | None = None
+) -> list[Prediction]:
+    """予想行の集合から最新バッチ（同一 created_at の行集合）を rank 昇順で返す。
+
+    Args:
+        predictions: 1レース分の Prediction 行。
+        as_of: 指定すると「この日までに作られたバッチ」に限定する。
+               レース後に作り直された予想を答え合わせから除外するために使う。
+
+    Returns:
+        最新バッチの行（rank 昇順）。該当バッチが無ければ空リスト。
+    """
+    candidates = [
+        prediction
+        for prediction in predictions
+        if as_of is None or prediction.created_at.date() <= as_of
+    ]
+    if not candidates:
+        return []
+    latest_created_at = max(prediction.created_at for prediction in candidates)
+    return sorted(
+        (
+            prediction
+            for prediction in candidates
+            if prediction.created_at == latest_created_at
+        ),
+        key=lambda prediction: prediction.rank,
+    )
 
 
 class ScoringEngine:
@@ -81,7 +114,8 @@ class ScoringEngine:
 
         1. 全出走馬・騎手・調教師・血統データを一括取得（N+1を解消）
         2. スコア順にソート
-        3. Prediction テーブルに保存
+        3. Prediction テーブルに1バッチとして追記（同一 created_at）。
+           過去の予想は答え合わせに使うため削除しない
         4. ランキング結果を返却
 
         Returns:
@@ -171,8 +205,8 @@ class ScoringEngine:
         for i, item in enumerate(scored_entries, start=1):
             item["rank"] = i
 
-        # 既存の Prediction を削除してから新規保存
-        self.db.query(Prediction).filter(Prediction.race_id == race_id).delete()
+        # 既存の Prediction は消さず、新しいバッチとして追記する（答え合わせ用の履歴）
+        batch_created_at = datetime.now()
         for item in scored_entries:
             self.db.add(Prediction(
                 race_id=race_id,
@@ -180,6 +214,7 @@ class ScoringEngine:
                 total_score=item["total_score"],
                 rank=item["rank"],
                 score_details=item["factor_scores"],
+                created_at=batch_created_at,
             ))
         self.db.flush()
 

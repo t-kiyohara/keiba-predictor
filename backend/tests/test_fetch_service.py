@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 from app.models import Entry, Horse, Prediction, Race
@@ -19,7 +19,9 @@ from tests.factories import make_entry, make_horse, make_race
 # テスト用定数
 # ---------------------------------------------------------------------------
 
-_TARGET_DATE = date(2024, 4, 28)
+# スコアリング対象は当日以降のレースに限られるため、対象日は未来日にする
+# （本番の get_target_race_dates も常に当日以降を返す）
+_TARGET_DATE = date.today() + timedelta(days=7)
 _RACE_ID = "202604280811"  # "08" = 京都
 
 
@@ -93,6 +95,22 @@ def _make_horse_profile() -> dict:
 
 
 @contextmanager
+def _no_graded_race_mocks(service: FetchService):
+    """JRA が重賞を返さない（フォールバック経路）状態のモック"""
+    with (
+        patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
+        patch.object(
+            service.jra, "fetch_graded_races", new=AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            service.netkeiba, "fetch_race_list_by_date",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        yield
+
+
+@contextmanager
 def _full_pipeline_mocks(service: FetchService):
     """全7ステップのスクレイパーをモックするコンテキストマネージャ"""
     with (
@@ -138,24 +156,16 @@ class TestFetchServiceFallback:
     """JRA がレースを返さない場合のフォールバック動作テスト"""
 
     def test_fallback_scores_existing_races(self, db):
-        """JRA がレースなしの場合、既存DB全レースでスコアリングが実行される"""
+        """JRA がレースなしの場合、既存DBの当日以降のレースでスコアリングが実行される"""
         # DBに既存レースと出走馬を作成
         race = make_race(db, "r_fb_001", name="フォールバックレース",
-                         venue="東京", distance=2000, grade="G1")
+                         venue="東京", distance=2000, grade="G1",
+                         race_date=_TARGET_DATE)
         horse = make_horse(db, "h_fb_001", name="フォールバック馬")
         make_entry(db, race.id, horse.id)
 
         service = FetchService(db)
-        with (
-            patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
-            patch.object(
-                service.jra, "fetch_graded_races", new=AsyncMock(return_value=[]),
-            ),
-            patch.object(
-                service.netkeiba, "fetch_race_list_by_date",
-                new=AsyncMock(return_value=[]),
-            ),
-        ):
+        with _no_graded_race_mocks(service):
             asyncio.run(service.execute())
 
         # フォールバックスコアリングで Prediction が作成されていること
@@ -166,21 +176,33 @@ class TestFetchServiceFallback:
     def test_fallback_with_no_db_races(self, db):
         """DBにレースが存在しない場合はエラーなく終了する"""
         service = FetchService(db)
-        with (
-            patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
-            patch.object(
-                service.jra, "fetch_graded_races", new=AsyncMock(return_value=[]),
-            ),
-            patch.object(
-                service.netkeiba, "fetch_race_list_by_date",
-                new=AsyncMock(return_value=[]),
-            ),
-        ):
+        with _no_graded_race_mocks(service):
             # エラーなく完了すること
             asyncio.run(service.execute())
 
         # Prediction は作成されない（レースなし）
         assert db.query(Prediction).count() == 0
+
+    def test_scoring_skips_past_races(self, db):
+        """確定済み（過去日）のレースには予想バッチを追加しないこと
+
+        履歴化した予想はレース後に作り直すと答え合わせを汚染するため、
+        スコアリング対象は当日以降のレースに限る。
+        """
+        past_race = make_race(db, "r_fb_past", name="確定済みレース",
+                              race_date=date.today() - timedelta(days=1))
+        today_race = make_race(db, "r_fb_today", name="当日レース",
+                               race_date=date.today())
+        horse = make_horse(db, "h_fb_past_001")
+        make_entry(db, past_race.id, horse.id)
+        make_entry(db, today_race.id, horse.id)
+
+        service = FetchService(db)
+        with _no_graded_race_mocks(service):
+            asyncio.run(service.execute())
+
+        assert db.query(Prediction).filter_by(race_id=past_race.id).count() == 0
+        assert db.query(Prediction).filter_by(race_id=today_race.id).count() == 1
 
 
 class TestFetchServiceFullPipeline:
@@ -338,16 +360,7 @@ class TestFetchServiceFullPipeline:
 
         service = FetchService(db, progress_callback=capture_progress)
 
-        with (
-            patch.object(service, "_step_determine_dates", return_value=[_TARGET_DATE]),
-            patch.object(
-                service.jra, "fetch_graded_races", new=AsyncMock(return_value=[]),
-            ),
-            patch.object(
-                service.netkeiba, "fetch_race_list_by_date",
-                new=AsyncMock(return_value=[]),
-            ),
-        ):
+        with _no_graded_race_mocks(service):
             asyncio.run(service.execute())
 
         # 少なくとも 2 ステップ（日程取得 + レース一覧）の progress が呼ばれること
