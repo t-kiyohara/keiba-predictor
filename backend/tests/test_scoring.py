@@ -104,19 +104,51 @@ class TestScoreSameRace:
 
     def test_score_same_race_with_win(self):
         """1着経験ありの場合は90以上"""
-        race = _race("r_sr_001", name="天皇賞（春）")
+        race = _race("r_sr_001", name="第169回天皇賞（春）(GI)")
         result = _result("r_sr_001", finish_position=1)
 
-        score = factors.score_same_race([(result, race)], "天皇賞")
+        score = factors.score_same_race([(result, race)], "天皇賞（春）")
         assert score >= 90.0
 
     def test_score_same_race_with_second(self):
         """2着経験ありの場合は75以上"""
-        race = _race("r_sr_002", name="天皇賞（秋）")
+        race = _race("r_sr_002", name="第168回天皇賞（秋）(GI)")
         result = _result("r_sr_002", finish_position=2)
 
-        score = factors.score_same_race([(result, race)], "天皇賞")
+        score = factors.score_same_race([(result, race)], "天皇賞（秋）")
         assert score >= 75.0
+
+    def test_score_same_race_matches_abbreviated_name(self):
+        """略記の出馬表名と正式名の過去成績が名寄せされる"""
+        race = _race("r_sr_003", name="第60回紫苑ステークス(GII)")
+        result = _result("r_sr_003", finish_position=1)
+
+        score = factors.score_same_race([(result, race)], "紫苑S")
+        assert score >= 90.0
+
+    def test_score_same_race_ignores_unrelated_name(self):
+        """無関係なレース名は一致させない"""
+        race = _race("r_sr_004", name="第60回紫苑ステークス(GII)")
+        result = _result("r_sr_004", finish_position=1)
+
+        score = factors.score_same_race([(result, race)], "京成杯AH")
+        assert score == 50.0
+
+    def test_score_same_race_tolerates_sponsor_prefix(self):
+        """冠名の有無だけが違う名前は末尾一致で同じレースとみなす"""
+        race = _race("r_sr_005", name="第39回セントウルステークス(GII)")
+        result = _result("r_sr_005", finish_position=1)
+
+        score = factors.score_same_race([(result, race)], "産経賞セントウルS")
+        assert score >= 90.0
+
+    def test_score_same_race_distinguishes_prefix_named_race(self):
+        """「京成杯」と「京成杯AH」は別レース(前方一致では混同しない)"""
+        race = _race("r_sr_006", name="第66回京成杯(GIII)")
+        result = _result("r_sr_006", finish_position=1)
+
+        score = factors.score_same_race([(result, race)], "京成杯AH")
+        assert score == 50.0
 
 
 # ---------------------------------------------------------------------------

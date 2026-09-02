@@ -33,6 +33,13 @@
     overflow-wrap: break-word;
   }
 
+  /* 見出しの折返しを文節で切り、行頭の括弧の余白を詰める(未対応ブラウザは無視) */
+  h1,
+  h2 {
+    word-break: auto-phrase;
+    text-spacing-trim: trim-start;
+  }
+
   /* キーボードフォーカス(DESIGN.md §7) */
   :focus-visible {
     outline: 2px solid var(--ai);
@@ -149,6 +156,11 @@
   .glyph {
     font-family: 'Segoe UI Symbol', 'Hiragino Sans', 'IBM Plex Sans JP', sans-serif;
     font-variant-emoji: text;
+  }
+
+  /* 横組みの明朝はプロポーショナル仮名で詰める。縦組み(馬名・騎手名)には掛けない */
+  .font-mincho:not(.tategaki) {
+    font-feature-settings: 'palt';
   }
 
   /* 縦組み(馬名・騎手名) */

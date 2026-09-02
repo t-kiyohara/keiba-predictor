@@ -6,6 +6,7 @@
 
 from app.models import Horse
 from app.scoring.weights import DISTANCE_TOLERANCE_M, NEUTRAL_SCORE
+from app.scrapers.constants import race_name_key
 
 
 def _clamp(score: float) -> float:
@@ -91,6 +92,18 @@ def score_recent_form(
     return _clamp(avg_position_score + avg_bonus)
 
 
+def _is_same_race(target_key: str, past_key: str) -> bool:
+    """名寄せキーが一致するか、一方が他方の末尾と一致すれば同じレースとみなす。
+
+    スポンサー冠名の有無（「産経賞セントウルステークス」と「セントウルステークス」）
+    だけを許す末尾一致にする。単純な包含だと「京成杯オータムハンデキャップ」が
+    別レースの「京成杯」にも一致してしまう。キーが空なら一致させない。
+    """
+    if not target_key or not past_key:
+        return False
+    return target_key.endswith(past_key) or past_key.endswith(target_key)
+
+
 def score_same_race(
     horse_results: list[tuple],
     race_name: str,
@@ -99,13 +112,18 @@ def score_same_race(
 
     Args:
         horse_results: (Result, Race) のリスト
-        race_name: 対象レース名（部分一致）
+        race_name: 対象レース名（名寄せキーで包含一致を見る）
 
     - 出走なし → 50（中立スコア）
     - 1着経験あり → 90+, 2着 → 75+, 3着 → 65+
     - 複数回出走の場合は平均着順で算出
     """
-    matching = [r for r, race in horse_results if race_name in race.name]
+    target_key = race_name_key(race_name)
+    matching = [
+        r
+        for r, race in horse_results
+        if _is_same_race(target_key, race_name_key(race.name))
+    ]
     if not matching:
         return NEUTRAL_SCORE
 

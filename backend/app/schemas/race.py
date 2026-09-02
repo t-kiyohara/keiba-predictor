@@ -14,6 +14,7 @@ class EntryOut(BaseModel):
     jockey_name: str | None
     sex: str | None
     age: int | None
+    recent_finishes: list[int] = []
 
 
 class RaceOut(BaseModel):

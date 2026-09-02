@@ -4,7 +4,7 @@
 ファイル構成をそのまま生成する:
 
     meta.json                 生成時刻とレース件数
-    races.json                予想を持つ全レース（date降順）
+    races.json                予想または結果を持つ全レース（date降順）
     races/{race_id}.json      レース + 最新予想バッチ + 出走馬
     horses/{horse_id}.json    馬 + 過去成績（date降順）
     stats.json                答え合わせ集計（verification_service.build_stats）
@@ -25,9 +25,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.models import Entry, Horse, Jockey, Prediction, Race, Result
+from app.models import Entry, Horse, Jockey, Payout, Prediction, Race, Result
 from app.scoring.engine import latest_prediction_batch
-from app.services.verification_service import build_stats
+from app.services.verification_service import (
+    PLACE_BET_TYPE,
+    WIN_BET_TYPE,
+    build_stats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,12 @@ JST = timezone(timedelta(hours=9))
 
 # SQLite のバインドパラメータ上限（既定999）を踏まないためのIN句分割サイズ
 _QUERY_CHUNK_SIZE = 500
+
+# races.json に載せる着順の件数（一覧の軽量化。詳細JSONは全着順を持つ）
+_RACES_JSON_RESULT_LIMIT = 3
+
+# entries の recent_finishes に載せる過去成績の件数
+_RECENT_FINISH_LIMIT = 5
 
 # ファイル名に使うID。netkeiba由来の外部文字列なのでパス要素として検証する
 _SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -50,10 +60,12 @@ def export_static_json(db: Session, out_dir: Path) -> dict[str, int]:
     Returns:
         {"races": レース件数, "horses": 馬件数}
     """
-    races = _load_predicted_races(db)
+    races = _load_published_races(db)
     race_ids = [race.id for race in races]
     batch_by_race = _load_latest_batches(db, race_ids)
     entries_by_race = _load_entries(db, race_ids)
+    results_by_race = _load_race_results(db, race_ids)
+    payouts_by_race = _load_win_place_payouts(db, race_ids)
 
     horse_ids = sorted(
         {entry.horse_id for entries in entries_by_race.values() for entry in entries}
@@ -61,6 +73,11 @@ def export_static_json(db: Session, out_dir: Path) -> dict[str, int]:
             prediction.horse_id
             for batch in batch_by_race.values()
             for prediction in batch
+        }
+        | {
+            result.horse_id
+            for results in results_by_race.values()
+            for result in results
         }
     )
     horse_by_id = _load_horses(db, horse_ids)
@@ -96,26 +113,53 @@ def export_static_json(db: Session, out_dir: Path) -> dict[str, int]:
             }
             for prediction in batch
         ]
+        result_payloads = [
+            _race_result_payload(result, horse_by_id)
+            for result in results_by_race.get(race.id, [])
+        ]
+        finish_position_by_horse = {
+            result["horse_id"]: result["finish_position"]
+            for result in result_payloads
+        }
         top_pick = (
             {
                 "horse_id": predictions[0]["horse_id"],
                 "horse_name": predictions[0]["horse_name"],
                 "total_score": predictions[0]["total_score"],
+                "finish_position": finish_position_by_horse.get(
+                    predictions[0]["horse_id"]
+                ),
             }
             if predictions
             else None
         )
-        race_payload = _race_payload(race, top_pick)
-        race_payloads.append(race_payload)
+        payouts = payouts_by_race.get(race.id)
+        race_payloads.append(
+            _race_payload(
+                race,
+                top_pick,
+                result_payloads[:_RACES_JSON_RESULT_LIMIT],
+                payouts,
+            )
+        )
 
         if _is_safe_file_id(race.id, "race_id"):
             _write_json(
                 races_dir / f"{race.id}.json",
                 {
-                    "race": race_payload,
+                    # 詳細JSONは全着順を載せる（races.json は上位のみ）
+                    "race": _race_payload(race, top_pick, result_payloads, payouts),
                     "predictions": predictions,
                     "entries": [
-                        _entry_payload(entry, horse_by_id, jockey_name_by_id, race.date)
+                        _entry_payload(
+                            entry,
+                            horse_by_id,
+                            jockey_name_by_id,
+                            race.date,
+                            _recent_finishes(
+                                results_by_horse, entry.horse_id, race.date
+                            ),
+                        )
                         for entry in _sorted_entries(entries_by_race.get(race.id, []))
                     ],
                 },
@@ -160,7 +204,12 @@ def export_static_json(db: Session, out_dir: Path) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-def _race_payload(race: Race, top_pick: dict | None) -> dict:
+def _race_payload(
+    race: Race,
+    top_pick: dict | None,
+    results: list[dict],
+    payouts: dict | None,
+) -> dict:
     return {
         "id": race.id,
         "name": race.name,
@@ -172,6 +221,22 @@ def _race_payload(race: Race, top_pick: dict | None) -> dict:
         "weather": race.weather,
         "track_condition": race.track_condition,
         "top_pick": top_pick,
+        "results": results,
+        "payouts": payouts,
+    }
+
+
+def _race_result_payload(result: Result, horse_by_id: dict[str, Horse]) -> dict:
+    """レースの着順1行（結果表用）。"""
+    return {
+        "horse_id": result.horse_id,
+        "horse_name": _horse_name(horse_by_id, result.horse_id),
+        "horse_number": result.horse_number,
+        "finish_position": result.finish_position,
+        "jockey_name": result.jockey_name,
+        "time": result.time,
+        "margin": result.margin,
+        "last_3f": result.last_3f,
     }
 
 
@@ -180,6 +245,7 @@ def _entry_payload(
     horse_by_id: dict[str, Horse],
     jockey_name_by_id: dict[str, str],
     race_date: date,
+    recent_finishes: Sequence[int] = (),
 ) -> dict:
     horse = horse_by_id.get(entry.horse_id)
     return {
@@ -191,6 +257,7 @@ def _entry_payload(
         "jockey_name": jockey_name_by_id.get(entry.jockey_id or ""),
         "sex": horse.sex if horse else None,
         "age": _horse_age(horse, race_date),
+        "recent_finishes": list(recent_finishes),
     }
 
 
@@ -229,6 +296,25 @@ def _horse_age(horse: Horse | None, race_date: date) -> int | None:
     if horse is None or horse.birthday is None:
         return None
     return race_date.year - horse.birthday.year
+
+
+def _recent_finishes(
+    results_by_horse: dict[str, list[tuple[Result, Race]]],
+    horse_id: str,
+    race_date: date,
+) -> list[int]:
+    """対象レースより前の着順を新しい順に最大 _RECENT_FINISH_LIMIT 件返す。
+
+    `_load_results()` が date 降順で読んだリストを前提にする。
+    """
+    finishes: list[int] = []
+    for result, past_race in results_by_horse.get(horse_id, []):
+        if past_race.date >= race_date or result.finish_position is None:
+            continue
+        finishes.append(result.finish_position)
+        if len(finishes) == _RECENT_FINISH_LIMIT:
+            break
+    return finishes
 
 
 def _horse_name(horse_by_id: dict[str, Horse], horse_id: str) -> str:
@@ -295,14 +381,71 @@ def _chunks(items: Sequence[str]) -> Iterator[Sequence[str]]:
         yield items[offset : offset + _QUERY_CHUNK_SIZE]
 
 
-def _load_predicted_races(db: Session) -> list[Race]:
-    """予想を持つレースを date 降順（同日内は race_id 降順）で返す。"""
+def _load_published_races(db: Session) -> list[Race]:
+    """予想または払戻を持つレースを date 降順（同日内は race_id 降順）で返す。
+
+    払戻の有無を「結果を収集済み」の判定に使う（collection_service と同じ基準）。
+    fetch が外部キーのために作る Result だけのスタブレースは載せない。
+    """
     return (
         db.query(Race)
-        .filter(Race.predictions.any())
+        .filter(Race.predictions.any() | Race.payouts.any())
         .order_by(Race.date.desc(), Race.id.desc())
         .all()
     )
+
+
+def _load_race_results(db: Session, race_ids: Sequence[str]) -> dict[str, list[Result]]:
+    """レースごとの着順確定 Result を finish_position 昇順で返す。"""
+    results_by_race: dict[str, list[Result]] = defaultdict(list)
+    for chunk in _chunks(race_ids):
+        rows = (
+            db.query(Result)
+            .filter(Result.race_id.in_(chunk))
+            .filter(Result.finish_position.isnot(None))
+            .order_by(Result.finish_position)
+            .all()
+        )
+        for result in rows:
+            results_by_race[result.race_id].append(result)
+    return dict(results_by_race)
+
+
+def _load_win_place_payouts(db: Session, race_ids: Sequence[str]) -> dict[str, dict]:
+    """レースごとの単勝・複勝払戻を返す。
+
+    Returns:
+        race_id → {"win": 単勝払戻 | None, "place": {組番: 複勝払戻}}。
+        単勝・複勝の払戻行が1件も無いレースはキーを持たない（= 結果未収集）。
+    """
+    win_amounts_by_race: dict[str, dict[str, int]] = defaultdict(dict)
+    place_amounts_by_race: dict[str, dict[str, int]] = defaultdict(dict)
+    for chunk in _chunks(race_ids):
+        rows = (
+            db.query(
+                Payout.race_id, Payout.bet_type, Payout.combination, Payout.amount
+            )
+            .filter(Payout.race_id.in_(chunk))
+            .filter(Payout.bet_type.in_((WIN_BET_TYPE, PLACE_BET_TYPE)))
+            .all()
+        )
+        for race_id, bet_type, combination, amount in rows:
+            amounts_by_combination = (
+                win_amounts_by_race
+                if bet_type == WIN_BET_TYPE
+                else place_amounts_by_race
+            )
+            amounts_by_combination[race_id][combination] = amount
+
+    payouts_by_race: dict[str, dict] = {}
+    for race_id in win_amounts_by_race.keys() | place_amounts_by_race.keys():
+        win_amounts = win_amounts_by_race.get(race_id, {})
+        payouts_by_race[race_id] = {
+            # 同着で単勝が複数行ある場合は組番の昇順で最初の1件を採る
+            "win": win_amounts[min(win_amounts)] if win_amounts else None,
+            "place": place_amounts_by_race.get(race_id, {}),
+        }
+    return payouts_by_race
 
 
 def _load_latest_batches(

@@ -229,7 +229,7 @@ class TestGetRaceEntries:
         first = data[0]
         assert set(first.keys()) == {
             "horse_id", "horse_number", "post_position", "weight",
-            "odds", "jockey_name", "sex", "age",
+            "odds", "jockey_name", "sex", "age", "recent_finishes",
         }
         assert first["horse_id"] == "h_ent_1"
         assert first["jockey_name"] == "出走騎手"

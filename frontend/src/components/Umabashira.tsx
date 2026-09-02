@@ -1,12 +1,19 @@
 import type { CSSProperties } from 'react';
 import { Entry, Prediction } from '../types';
-import { markColorClass, markForRank, wakuChipClass } from '../constants/paper';
+import {
+  finishClass,
+  markColorClass,
+  markForRank,
+  wakuChipClass,
+} from '../constants/paper';
 
 interface Props {
   predictions: Prediction[];
   entries: Entry[];
   selectedHorseId: string | null;
   onSelect: (horseId: string) => void;
+  /** 確定着順(horse_id → 着)。未収集なら渡さない */
+  finishByHorseId?: Record<string, number>;
 }
 
 interface HorseColumn {
@@ -19,6 +26,8 @@ interface HorseColumn {
   odds: number | null;
   jockeyName: string | null;
   build: string | null; // 性齢・斤量
+  recentFinishes: number[]; // 近走の着順(新しい順)
+  finishPosition: number | null; // このレースの確定着順
 }
 
 /** 行の高さ。ラベル列と馬列で共有し、横方向の行合わせを崩さない */
@@ -28,8 +37,10 @@ const CELL = {
   name: 'h-40',
   build: 'h-6',
   jockey: 'h-[4.5rem]',
+  recent: 'h-[5.5rem]',
   odds: 'h-6',
   score: 'h-[4.5rem]',
+  finish: 'h-7',
 } as const;
 
 type CellRow = keyof typeof CELL;
@@ -40,11 +51,20 @@ const ROW_LABELS: [CellRow, string][] = [
   ['name', '馬名'],
   ['build', '性齢・斤量'],
   ['jockey', '騎手'],
+  ['recent', '近走'],
   ['odds', '単勝'],
   ['score', 'スコア'],
+  ['finish', '着順'],
 ];
 
-function buildColumns(predictions: Prediction[], entries: Entry[]): HorseColumn[] {
+/** 上に細罫を引く行。予想の欄(スコア)と結果の欄(着順)を仕切る */
+const ROWS_WITH_TOP_RULE: CellRow[] = ['score', 'finish'];
+
+function buildColumns(
+  predictions: Prediction[],
+  entries: Entry[],
+  finishByHorseId: Record<string, number>,
+): HorseColumn[] {
   const entryByHorseId = new Map(entries.map((entry) => [entry.horse_id, entry]));
 
   const columns = predictions.map((prediction): HorseColumn => {
@@ -63,6 +83,8 @@ function buildColumns(predictions: Prediction[], entries: Entry[]): HorseColumn[
       odds: entry?.odds ?? null,
       jockeyName: entry?.jockey_name ?? null,
       build: [sexAge, weight].filter(Boolean).join(' ') || null,
+      recentFinishes: entry?.recent_finishes ?? [],
+      finishPosition: finishByHorseId[prediction.horse_id] ?? null,
     };
   });
 
@@ -130,8 +152,9 @@ export default function Umabashira({
   entries,
   selectedHorseId,
   onSelect,
+  finishByHorseId = {},
 }: Props) {
-  const columns = buildColumns(predictions, entries);
+  const columns = buildColumns(predictions, entries, finishByHorseId);
 
   // 全頭で欠けている項目は行ごと落とす(「–」だけの行を紙面に残さない)
   const rowVisible: Record<CellRow, boolean> = {
@@ -142,8 +165,10 @@ export default function Umabashira({
     name: true,
     build: columns.some((column) => column.build !== null),
     jockey: columns.some((column) => column.jockeyName !== null),
+    recent: columns.some((column) => column.recentFinishes.length > 0),
     odds: columns.some((column) => column.odds !== null),
     score: true,
+    finish: columns.some((column) => column.finishPosition !== null),
   };
 
   return (
@@ -157,7 +182,7 @@ export default function Umabashira({
             <div
               key={row}
               className={`${CELL[row]} flex items-center justify-end text-caption
-                text-ink-weak ${row === 'score' ? 'rule-t' : ''}`}
+                text-ink-weak ${ROWS_WITH_TOP_RULE.includes(row) ? 'rule-t' : ''}`}
             >
               {label}
             </div>
@@ -220,6 +245,25 @@ export default function Umabashira({
                       </span>
                     )}
 
+                    {rowVisible.recent && (
+                      <span
+                        className={`${CELL.recent} flex flex-col items-center
+                          justify-center gap-0.5 text-[11px] leading-none
+                          tabular-nums`}
+                      >
+                        {column.recentFinishes.length > 0
+                          ? column.recentFinishes.map((finishPosition, order) => (
+                              <span
+                                key={`${finishPosition}-${order}`}
+                                className={finishClass(finishPosition)}
+                              >
+                                {finishPosition}
+                              </span>
+                            ))
+                          : <span className="text-ink-weak">–</span>}
+                      </span>
+                    )}
+
                     {rowVisible.odds && (
                       <span
                         className={`${CELL.odds} flex items-center justify-center
@@ -246,6 +290,16 @@ export default function Umabashira({
                         orientation="vertical"
                       />
                     </span>
+
+                    {rowVisible.finish && (
+                      <span
+                        className={`${CELL.finish} rule-t flex w-full items-center
+                          justify-center text-data tabular-nums
+                          ${finishClass(column.finishPosition)}`}
+                      >
+                        {column.finishPosition !== null ? `${column.finishPosition}着` : '–'}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
@@ -276,6 +330,11 @@ export default function Umabashira({
                   騎手
                 </th>
               )}
+              {rowVisible.recent && (
+                <th scope="col" className="px-2 py-1 font-medium">
+                  近走
+                </th>
+              )}
               {rowVisible.odds && (
                 <th scope="col" className="px-2 py-1 text-right font-medium">
                   単勝
@@ -284,6 +343,11 @@ export default function Umabashira({
               <th scope="col" className="px-2 py-1 text-right font-medium">
                 スコア
               </th>
+              {rowVisible.finish && (
+                <th scope="col" className="px-2 py-1 text-right font-medium">
+                  着順
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -326,6 +390,24 @@ export default function Umabashira({
                   {rowVisible.jockey && (
                     <td className="px-2 py-1.5 text-ink-weak">{column.jockeyName ?? '–'}</td>
                   )}
+                  {rowVisible.recent && (
+                    <td className="px-2 py-1.5">
+                      {column.recentFinishes.length > 0 ? (
+                        <span className="flex gap-1.5 tabular-nums">
+                          {column.recentFinishes.map((finishPosition, order) => (
+                            <span
+                              key={`${finishPosition}-${order}`}
+                              className={finishClass(finishPosition)}
+                            >
+                              {finishPosition}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-ink-weak">–</span>
+                      )}
+                    </td>
+                  )}
                   {rowVisible.odds && (
                     <td className="px-2 py-1.5 text-right tabular-nums">
                       {column.odds !== null ? column.odds.toFixed(1) : '–'}
@@ -347,6 +429,13 @@ export default function Umabashira({
                       />
                     </div>
                   </td>
+                  {rowVisible.finish && (
+                    <td
+                      className={`px-2 py-1.5 text-right tabular-nums ${finishClass(column.finishPosition)}`}
+                    >
+                      {column.finishPosition !== null ? `${column.finishPosition}着` : '–'}
+                    </td>
+                  )}
                 </tr>
               );
             })}

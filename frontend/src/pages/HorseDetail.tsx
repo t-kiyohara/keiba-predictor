@@ -1,7 +1,12 @@
 import { Link, useParams } from 'react-router-dom';
 import { Horse, RaceResult } from '../types';
 import { FETCH_ERROR_MESSAGE, useResource } from '../hooks/useApi';
-import { formatPaperDate, gradeBadgeClass } from '../constants/paper';
+import {
+  finishClass,
+  formatPaperDate,
+  gradeBadgeClass,
+  splitRaceName,
+} from '../constants/paper';
 
 function calcAge(birthday: string | null): string {
   if (!birthday) return '–';
@@ -9,17 +14,13 @@ function calcAge(birthday: string | null): string {
   if (!year || !month || !day) return '–';
   const today = new Date();
   let age = today.getFullYear() - year;
-  if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) {
+  if (
+    today.getMonth() + 1 < month ||
+    (today.getMonth() + 1 === month && today.getDate() < day)
+  ) {
     age -= 1;
   }
   return `${age}歳`;
-}
-
-/** 着順1–3着は墨太字、1着のみ朱(DESIGN.md §5-4) */
-function finishClass(finishPosition: number | null): string {
-  if (finishPosition === 1) return 'font-bold text-shu';
-  if (finishPosition !== null && finishPosition <= 3) return 'font-bold text-ink';
-  return 'text-ink-weak';
 }
 
 function Pedigree({ horse }: { horse: Horse }) {
@@ -47,7 +48,9 @@ function Pedigree({ horse }: { horse: Horse }) {
 export default function HorseDetail() {
   const { id } = useParams<{ id: string }>();
   const horseResource = useResource<Horse>(id ? `/horses/${id}` : null);
-  const resultResource = useResource<RaceResult[]>(id ? `/horses/${id}/results` : null);
+  const resultResource = useResource<RaceResult[]>(
+    id ? `/horses/${id}/results` : null,
+  );
 
   const horse = horseResource.value;
   const results = resultResource.value ?? [];
@@ -67,7 +70,9 @@ export default function HorseDetail() {
       {/* 馬の見出し欄 */}
       <div className="rule-heavy pb-2">
         {horseResource.status === 'loading' && (
-          <p className="py-2 text-data text-ink-weak">馬の情報を読み込んでいます</p>
+          <p className="py-2 text-data text-ink-weak">
+            馬の情報を読み込んでいます
+          </p>
         )}
         {horseResource.status === 'error' && (
           <p role="alert" className="py-2 text-data text-shu">
@@ -76,11 +81,22 @@ export default function HorseDetail() {
         )}
         {horse && (
           <>
-            <h1 className="font-mincho text-race-name font-bold text-ink">{horse.name}</h1>
-            <p className="mt-0.5 text-data text-ink-weak">
-              {horse.sex ?? '性別不明'} ・ {calcAge(horse.birthday)} ・ 生年月日{' '}
-              <span className="tabular-nums">{horse.birthday ?? '不明'}</span>
-            </p>
+            <h1 className="font-mincho text-race-name font-bold text-ink">
+              {horse.name}
+            </h1>
+            {/* プロフィール未取得の馬(過去結果だけの馬)では「不明」を並べず行ごと省く */}
+            {(horse.sex || horse.birthday) && (
+              <p className="mt-0.5 text-data text-ink-weak">
+                {horse.sex && <span>{horse.sex}</span>}
+                {horse.sex && horse.birthday && ' ・ '}
+                {horse.birthday && (
+                  <>
+                    {calcAge(horse.birthday)} ・ 生年月日{' '}
+                    <span className="tabular-nums">{horse.birthday}</span>
+                  </>
+                )}
+              </p>
+            )}
           </>
         )}
       </div>
@@ -88,14 +104,18 @@ export default function HorseDetail() {
       {/* 血統欄 */}
       {horse && (
         <section className="rule-b py-3">
-          <h2 className="mb-2 font-mincho text-heading font-bold text-ink">血統</h2>
+          <h2 className="mb-2 font-mincho text-heading font-bold text-ink">
+            血統
+          </h2>
           <Pedigree horse={horse} />
         </section>
       )}
 
       {/* 戦績欄 */}
       <section className="py-3">
-        <h2 className="mb-2 font-mincho text-heading font-bold text-ink">戦績</h2>
+        <h2 className="mb-2 font-mincho text-heading font-bold text-ink">
+          戦績
+        </h2>
 
         {resultResource.status === 'loading' && (
           <p className="text-data text-ink-weak">戦績を読み込んでいます</p>
@@ -106,7 +126,9 @@ export default function HorseDetail() {
           </p>
         )}
         {resultResource.status === 'ready' && results.length === 0 && (
-          <p className="text-data text-ink-weak">戦績はまだ取得できていません</p>
+          <p className="text-data text-ink-weak">
+            戦績はまだ取得できていません
+          </p>
         )}
 
         {results.length > 0 && (
@@ -115,7 +137,10 @@ export default function HorseDetail() {
               <caption className="sr-only">過去の戦績</caption>
               <thead>
                 <tr className="bg-paper-inset text-left text-caption text-ink-weak">
-                  <th scope="col" className="whitespace-nowrap px-2 py-1 font-medium">
+                  <th
+                    scope="col"
+                    className="whitespace-nowrap px-2 py-1 font-medium"
+                  >
                     日付
                   </th>
                   <th scope="col" className="px-2 py-1 font-medium">
@@ -139,7 +164,10 @@ export default function HorseDetail() {
                     着順
                   </th>
                   {hasRaceDetail && (
-                    <th scope="col" className="px-2 py-1 text-right font-medium">
+                    <th
+                      scope="col"
+                      className="px-2 py-1 text-right font-medium"
+                    >
                       着差
                     </th>
                   )}
@@ -161,9 +189,13 @@ export default function HorseDetail() {
                       {formatPaperDate(result.date)}
                     </td>
                     <td className="px-2 py-1.5">
-                      <span className="font-mincho font-bold text-ink">{result.race_name}</span>
+                      <span className="font-mincho font-bold text-ink">
+                        {splitRaceName(result.race_name).title}
+                      </span>
                       {result.grade && (
-                        <span className={`ml-1.5 ${gradeBadgeClass(result.grade)}`}>
+                        <span
+                          className={`ml-1.5 ${gradeBadgeClass(result.grade)}`}
+                        >
                           {result.grade}
                         </span>
                       )}
@@ -173,14 +205,20 @@ export default function HorseDetail() {
                       {result.course_type}
                       <span className="tabular-nums">{result.distance}</span>m
                     </td>
-                    <td className="px-2 py-1.5 text-ink">{result.track_condition ?? '–'}</td>
+                    <td className="px-2 py-1.5 text-ink">
+                      {result.track_condition ?? '–'}
+                    </td>
                     {hasRaceDetail && (
-                      <td className="px-2 py-1.5 text-ink-weak">{result.jockey_name ?? '–'}</td>
+                      <td className="px-2 py-1.5 text-ink-weak">
+                        {result.jockey_name ?? '–'}
+                      </td>
                     )}
                     <td
                       className={`px-2 py-1.5 text-right tabular-nums ${finishClass(result.finish_position)}`}
                     >
-                      {result.finish_position !== null ? `${result.finish_position}着` : '–'}
+                      {result.finish_position !== null
+                        ? `${result.finish_position}着`
+                        : '–'}
                     </td>
                     {hasRaceDetail && (
                       <td className="px-2 py-1.5 text-right text-ink-weak">
@@ -191,7 +229,9 @@ export default function HorseDetail() {
                       {result.time ?? '–'}
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-ink">
-                      {result.last_3f !== null ? result.last_3f.toFixed(1) : '–'}
+                      {result.last_3f !== null
+                        ? result.last_3f.toFixed(1)
+                        : '–'}
                     </td>
                   </tr>
                 ))}

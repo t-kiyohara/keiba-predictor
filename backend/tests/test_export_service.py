@@ -24,9 +24,12 @@ from tests.factories import (
 
 RACE_ID_NEW = "202412280611"
 RACE_ID_OLD = "202405021211"
-RACE_ID_PAST = "202305021211"  # 予想なし（races.jsonに載らない）
+RACE_ID_PAST = "202305021211"  # 予想・払戻なし（races.jsonに載らない）
+RACE_ID_RESULT_ONLY = "202411020511"  # 予想なし・結果と払戻あり
 HORSE_ID_A = "2021105165"
 HORSE_ID_B = "2021104976"
+HORSE_ID_C = "2021104111"
+HORSE_ID_D = "2021104222"
 JOCKEY_ID = "01167"
 
 _RACE_KEYS = {
@@ -40,6 +43,8 @@ _RACE_KEYS = {
     "weather",
     "track_condition",
     "top_pick",
+    "results",
+    "payouts",
 }
 _PREDICTION_KEYS = {
     "rank",
@@ -57,6 +62,7 @@ _ENTRY_KEYS = {
     "jockey_name",
     "sex",
     "age",
+    "recent_finishes",
 }
 _HORSE_KEYS = {"id", "name", "sex", "birthday", "sire", "dam", "dam_sire"}
 _RESULT_KEYS = {
@@ -78,6 +84,30 @@ _RESULT_KEYS = {
 _FACTOR_SCORES = {
     "recent_form": {"score": 82.0, "label": "近走成績", "weighted": 16.4}
 }
+
+
+_FINISHER_KEYS = {
+    "horse_id",
+    "horse_name",
+    "horse_number",
+    "finish_position",
+    "jockey_name",
+    "time",
+    "margin",
+    "last_3f",
+}
+
+
+def _finisher_identities(finishers: list[dict]) -> list[dict]:
+    """結果行から馬の識別子と着順だけを取り出す（騎手・タイム等は別途検証）。"""
+    assert all(set(finisher) == _FINISHER_KEYS for finisher in finishers)
+    return [
+        {
+            key: finisher[key]
+            for key in ("horse_id", "horse_name", "horse_number", "finish_position")
+        }
+        for finisher in finishers
+    ]
 
 
 def _build_dataset(db) -> None:
@@ -195,6 +225,42 @@ def _build_dataset(db) -> None:
     make_payout(db, RACE_ID_OLD, bet_type="複勝", combination="5", amount=150)
 
 
+def _add_result_only_race(db) -> None:
+    """予想なし・結果と払戻ありのレース（4着分）を足す。"""
+    make_race(
+        db,
+        race_id=RACE_ID_RESULT_ONLY,
+        name="アルゼンチン共和国杯",
+        race_date=date(2024, 11, 2),
+        venue="東京",
+        grade="G2",
+    )
+    make_horse(db, HORSE_ID_C, name="テスト馬ガンマ")
+    make_horse(db, HORSE_ID_D, name="テスト馬デルタ")
+    # (horse_id, 着順, 馬番) — 着順昇順に並ぶことを確認するため降順で登録する
+    finish_order = [
+        (HORSE_ID_A, 1, 5),
+        (HORSE_ID_B, 2, 3),
+        (HORSE_ID_C, 3, 8),
+        (HORSE_ID_D, 4, 1),
+    ]
+    for horse_id, finish_position, horse_number in reversed(finish_order):
+        make_result(
+            db,
+            RACE_ID_RESULT_ONLY,
+            horse_id,
+            finish_position=finish_position,
+            horse_number=horse_number,
+        )
+    make_payout(db, RACE_ID_RESULT_ONLY, bet_type="単勝", combination="5", amount=760)
+    make_payout(db, RACE_ID_RESULT_ONLY, bet_type="複勝", combination="5", amount=210)
+    make_payout(db, RACE_ID_RESULT_ONLY, bet_type="複勝", combination="3", amount=180)
+    # 単勝・複勝以外の券種は payouts に含めない
+    make_payout(
+        db, RACE_ID_RESULT_ONLY, bet_type="馬連", combination="3-5", amount=1200
+    )
+
+
 def _read(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -239,7 +305,7 @@ class TestExportStaticJson:
         export_static_json(db, tmp_path)
         races = _read(tmp_path / "races.json")
 
-        # 予想を持たない RACE_ID_PAST は載らない
+        # 予想も払戻も持たない RACE_ID_PAST は載らない
         assert [race["id"] for race in races] == [RACE_ID_NEW, RACE_ID_OLD]
         assert set(races[0]) == _RACE_KEYS
         assert races[0]["name"] == "ホープフルステークス"
@@ -255,7 +321,13 @@ class TestExportStaticJson:
             "horse_id": HORSE_ID_A,
             "horse_name": "テスト馬アルファ",
             "total_score": 88.5,
+            "finish_position": None,  # 結果未収集
         }
+        assert races[0]["results"] == []
+        assert races[0]["payouts"] is None
+        # 結果収集済みのレースは◎の着順と払戻を持つ
+        assert races[1]["top_pick"]["finish_position"] == 1
+        assert races[1]["payouts"] == {"win": 410, "place": {"5": 150}}
         assert races[1]["weather"] is None
         assert races[1]["track_condition"] == "良"
 
@@ -345,6 +417,96 @@ class TestExportStaticJson:
 
         assert payload["results"] == []
         assert payload["horse"]["birthday"] is None
+
+    def test_result_only_race_is_exported(self, db, tmp_path):
+        """予想がなくても払戻があれば紙面に載る（過去の重賞結果）"""
+        _build_dataset(db)
+        _add_result_only_race(db)
+
+        export_static_json(db, tmp_path)
+        races = _read(tmp_path / "races.json")
+
+        assert [race["id"] for race in races] == [
+            RACE_ID_NEW,
+            RACE_ID_RESULT_ONLY,
+            RACE_ID_OLD,
+        ]
+        listed = races[1]
+        assert listed["top_pick"] is None
+        # 一覧は上位3頭のみ
+        assert _finisher_identities(listed["results"]) == [
+            {
+                "horse_id": HORSE_ID_A,
+                "horse_name": "テスト馬アルファ",
+                "horse_number": 5,
+                "finish_position": 1,
+            },
+            {
+                "horse_id": HORSE_ID_B,
+                "horse_name": "テスト馬ベータ",
+                "horse_number": 3,
+                "finish_position": 2,
+            },
+            {
+                "horse_id": HORSE_ID_C,
+                "horse_name": "テスト馬ガンマ",
+                "horse_number": 8,
+                "finish_position": 3,
+            },
+        ]
+        assert listed["payouts"] == {"win": 760, "place": {"5": 210, "3": 180}}
+
+        # 詳細JSONは全着順を持つ
+        detail = _read(tmp_path / "races" / f"{RACE_ID_RESULT_ONLY}.json")["race"]
+        assert [result["finish_position"] for result in detail["results"]] == [
+            1,
+            2,
+            3,
+            4,
+        ]
+        # 結果表からリンクするため、結果に出る馬の詳細JSONも書き出す
+        assert (tmp_path / "horses" / f"{HORSE_ID_C}.json").exists()
+        assert (tmp_path / "horses" / f"{HORSE_ID_D}.json").exists()
+
+    def test_result_without_payout_is_not_exported(self, db, tmp_path):
+        """払戻のないスタブレース（fetchが外部キー用に作る）は載らない"""
+        _build_dataset(db)
+
+        export_static_json(db, tmp_path)
+
+        race_ids = {race["id"] for race in _read(tmp_path / "races.json")}
+        assert RACE_ID_PAST not in race_ids
+        assert not (tmp_path / "races" / f"{RACE_ID_PAST}.json").exists()
+
+    def test_entry_recent_finishes(self, db, tmp_path):
+        """recent_finishes は対象レースより前の着順を新しい順に最大5件持つ"""
+        _build_dataset(db)
+        # アルファの過去成績を増やす（対象レースより前が6件になる）
+        for race_date, finish_position in [
+            (date(2024, 5, 1), 4),
+            (date(2024, 4, 1), 5),
+            (date(2024, 3, 1), 6),
+            (date(2024, 2, 1), 7),
+        ]:
+            past_race_id = f"{race_date.strftime('%Y%m%d')}0511"
+            make_race(db, race_id=past_race_id, name="過去戦", race_date=race_date)
+            make_result(
+                db, past_race_id, HORSE_ID_A, finish_position=finish_position
+            )
+
+        export_static_json(db, tmp_path)
+
+        new_entries = _read(tmp_path / "races" / f"{RACE_ID_NEW}.json")["entries"]
+        alpha = next(e for e in new_entries if e["horse_id"] == HORSE_ID_A)
+        beta = next(e for e in new_entries if e["horse_id"] == HORSE_ID_B)
+        # 2023-04-01(3着) は6件目なので落ちる
+        assert alpha["recent_finishes"] == [1, 4, 5, 6, 7]
+        assert beta["recent_finishes"] == []
+
+        # 対象レース当日以降の成績（安田記念の1着）は含めない
+        old_entries = _read(tmp_path / "races" / f"{RACE_ID_OLD}.json")["entries"]
+        alpha_old = next(e for e in old_entries if e["horse_id"] == HORSE_ID_A)
+        assert alpha_old["recent_finishes"] == [4, 5, 6, 7, 3]
 
     def test_stats_json_matches_build_stats(self, db, tmp_path):
         _build_dataset(db)

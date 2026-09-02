@@ -9,7 +9,12 @@ import {
 import { Line } from 'react-chartjs-2';
 import { Stats as StatsData, StatsRow } from '../types';
 import { useResource } from '../hooks/useApi';
-import { formatPaperDate, gradeBadgeClass, paperColor } from '../constants/paper';
+import {
+  formatPaperDate,
+  gradeBadgeClass,
+  paperColor,
+  splitRaceName,
+} from '../constants/paper';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip);
 
@@ -182,7 +187,9 @@ function ReviewTable({ rows }: { rows: StatsRow[] }) {
                 {formatPaperDate(row.date)}
               </td>
               <td className="px-2 py-1.5">
-                <span className="font-mincho font-bold text-ink">{row.race_name}</span>
+                <span className="font-mincho font-bold text-ink">
+                  {splitRaceName(row.race_name).title}
+                </span>
                 {row.grade && (
                   <span className={`ml-1.5 ${gradeBadgeClass(row.grade)}`}>{row.grade}</span>
                 )}

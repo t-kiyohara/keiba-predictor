@@ -124,3 +124,76 @@ export function raceNumberFromId(raceId: string): string | null {
   const raceNumber = Number(match[1]);
   return raceNumber >= 1 && raceNumber <= 12 ? `${raceNumber}R` : null;
 }
+
+/* 天気の表記ゆれを紙面の1文字に寄せる(「晴れ」→「晴」/「曇り」→「曇」) */
+export function formatWeather(weather: string | null): string | null {
+  if (!weather) return null;
+  return weather.replace(/(晴)れ$/, '$1').replace(/(曇)り$/, '$1');
+}
+
+/* 括弧内のグレード表記。グレード章(badge)で既に出ているのでレース名からは落とす。
+   NFKC 正規化後は全角括弧・ローマ数字も ASCII になっている(Ⅲ→III) */
+const GRADE_IN_NAME_PATTERN = /[(](?:J[・.]?\s*)?G\s*(?:III|II|I|1|2|3)[)]/g;
+
+/* 専門紙の略記 → 正式表記。長い略記から先に判定する */
+const NAME_ABBREVIATIONS: [string, string][] = [
+  ['AH', 'オータムハンデキャップ'],
+  ['JS', 'ジャンプステークス'],
+  ['CT', 'チャレンジトロフィー'],
+  ['S', 'ステークス'],
+  ['C', 'カップ'],
+  ['T', 'トロフィー'],
+  ['H', 'ハンデキャップ'],
+  ['D', 'ダッシュ'],
+];
+
+/** 末尾の略記を正式表記に展開(「紫苑S」→「紫苑ステークス」)。
+    直前が英大文字の場合は略号そのもの(AJCC 等)とみなして触らない */
+function expandAbbreviation(name: string): string {
+  for (const [abbreviation, expanded] of NAME_ABBREVIATIONS) {
+    if (!name.endsWith(abbreviation)) continue;
+    const stem = name.slice(0, -abbreviation.length);
+    if (stem.length === 0 || /[A-Z]$/.test(stem)) return name;
+    return `${stem}${expanded}`;
+  }
+  return name;
+}
+
+/** '第62回新潟記念(GIII)' → { title: '新潟記念', edition: '第62回' }。
+    回次はキャプションに分け、レース名本体だけを明朝の見出しに載せる */
+export function splitRaceName(name: string): { title: string; edition: string | null } {
+  const normalized = name.normalize('NFKC').replace(GRADE_IN_NAME_PATTERN, '').trim();
+  const editionMatch = normalized.match(/^第\s*(\d+)\s*回\s*/);
+  const body = editionMatch ? normalized.slice(editionMatch[0].length) : normalized;
+  return {
+    title: expandAbbreviation(body.trim()) || normalized,
+    edition: editionMatch ? `第${editionMatch[1]}回` : null,
+  };
+}
+
+/** 馬番 → 枠番(JRA の枠順割り)。8頭以下は枠=馬番、9頭以上は8枠に後ろから詰める。
+    確定結果には枠番が無いので、結果表の枠色チップはこれで色付けする */
+export function wakuFromHorseNumber(
+  horseNumber: number | null,
+  headCount: number,
+): number | null {
+  if (horseNumber === null || horseNumber < 1) return null;
+  if (headCount <= 8) return horseNumber <= 8 ? horseNumber : 8;
+
+  const horsesPerWaku = Math.floor(headCount / 8);
+  const wakuWithExtraHorse = headCount % 8;
+  let lastHorseNumberInWaku = 0;
+  for (let waku = 1; waku <= 8; waku += 1) {
+    lastHorseNumberInWaku +=
+      waku > 8 - wakuWithExtraHorse ? horsesPerWaku + 1 : horsesPerWaku;
+    if (horseNumber <= lastHorseNumberInWaku) return waku;
+  }
+  return 8;
+}
+
+/** 着順1–3着は墨太字、1着のみ朱(DESIGN.md §5-4)。戦績表・結果欄・馬柱で共用 */
+export function finishClass(finishPosition: number | null): string {
+  if (finishPosition === 1) return 'font-bold text-shu';
+  if (finishPosition !== null && finishPosition <= 3) return 'font-bold text-ink';
+  return 'text-ink-weak';
+}

@@ -6,10 +6,36 @@ import { isStaticMode } from '../api/staticRoutes';
 import FetchButton from '../components/FetchButton';
 import {
   formatPaperDate,
+  formatWeather,
   gradeBadgeClass,
   raceNumberFromId,
+  splitRaceName,
   weatherGlyph,
 } from '../constants/paper';
+
+/** 確定結果の掲載窓。既定はこの日数ぶんだけ載せ、残りはボタンで開く */
+const RECENT_RESULT_DAYS = 14;
+
+/** 結果が入っているか(データ契約 v2。API モードでは results ごと undefined) */
+function isSettled(race: Race): boolean {
+  return (race.results?.length ?? 0) > 0;
+}
+
+/** 最新の結果日から RECENT_RESULT_DAYS 以内のレースだけに絞る */
+function withinRecentResultWindow(settledRaces: Race[]): Race[] {
+  if (settledRaces.length === 0) return settledRaces;
+  const latestDate = settledRaces.reduce(
+    (latest, race) => (race.date > latest ? race.date : latest),
+    settledRaces[0].date,
+  );
+  // ISO 文字列同士の比較で済ませる。toISOString はローカル時刻を UTC に寄せて
+  // 1日ずれるので使わない
+  const windowStart = new Date(`${latestDate}T00:00:00`);
+  windowStart.setDate(windowStart.getDate() - RECENT_RESULT_DAYS);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const windowStartDate = `${windowStart.getFullYear()}-${pad(windowStart.getMonth() + 1)}-${pad(windowStart.getDate())}`;
+  return settledRaces.filter((race) => race.date >= windowStartDate);
+}
 
 /** 日付ごとに並べ替えずグルーピング(API は date 降順で返す) */
 function groupByDate(races: Race[]): [string, Race[]][] {
@@ -76,7 +102,11 @@ function useTopPicks(races: Race[]): Record<string, TopPick | null> {
 
 function RaceRow({ race, topPick }: { race: Race; topPick: TopPick | null | undefined }) {
   const glyph = weatherGlyph(race.weather);
+  const weather = formatWeather(race.weather);
   const raceNumber = raceNumberFromId(race.id);
+  const raceName = splitRaceName(race.name);
+  const winner = race.results?.[0] ?? null;
+  const pickFinish = topPick?.finish_position ?? null;
 
   return (
     <li className="rule-b">
@@ -88,18 +118,52 @@ function RaceRow({ race, topPick }: { race: Race; topPick: TopPick | null | unde
       >
         <span className={gradeBadgeClass(race.grade)}>{race.grade}</span>
 
-        <span className="font-mincho text-heading font-bold text-ink">{race.name}</span>
+        <span className="flex flex-wrap items-baseline gap-x-1.5">
+          <span className="font-mincho text-heading font-bold text-ink">{raceName.title}</span>
+          {raceName.edition && (
+            <span className="text-caption text-ink-weak">{raceName.edition}</span>
+          )}
+        </span>
 
         <span className="col-span-2 text-data text-ink-weak md:col-span-1">
           {race.venue}
           {raceNumber ? ` ${raceNumber}` : ''} ・ {race.course_type}
           <span className="tabular-nums">{race.distance}</span>m
           {race.track_condition ? ` ・ ${race.track_condition}` : ''}
+          {weather ? ` ・ ${weather}` : ''}
           {glyph && <span className="glyph"> {glyph}</span>}
         </span>
 
-        <span className="col-span-2 flex items-baseline gap-1.5 text-data md:col-span-1 md:justify-end">
-          {topPick ? (
+        <span
+          className="col-span-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-data
+            md:col-span-1 md:justify-end"
+        >
+          {winner ? (
+            <>
+              <span className="flex items-baseline gap-1.5">
+                <span className="text-caption text-ink-weak">1着</span>
+                <span className="font-mincho font-bold text-ink">{winner.horse_name}</span>
+              </span>
+              {topPick && (
+                <span className="flex items-baseline gap-1">
+                  <span className="mark text-shu" aria-label="本命">
+                    ◎
+                  </span>
+                  <span className="text-ink">{topPick.horse_name}</span>
+                  <span className="text-ink-weak">→</span>
+                  <span
+                    className={
+                      pickFinish !== null && pickFinish <= 3
+                        ? 'font-bold tabular-nums text-shu'
+                        : 'tabular-nums text-ink-weak'
+                    }
+                  >
+                    {pickFinish !== null ? `${pickFinish}着` : '―'}
+                  </span>
+                </span>
+              )}
+            </>
+          ) : topPick ? (
             <>
               <span className="mark text-shu" aria-label="本命">
                 ◎
@@ -115,10 +179,48 @@ function RaceRow({ race, topPick }: { race: Race; topPick: TopPick | null | unde
   );
 }
 
+/** 日付見出し + 1レース=1行の欄。上段(今週の番組)と下段(結果)で共有する */
+function RaceDateGroups({
+  races,
+  topPicks,
+}: {
+  races: Race[];
+  topPicks: Record<string, TopPick | null>;
+}) {
+  return (
+    <>
+      {groupByDate(races).map(([date, racesOnDate]) => (
+        <section key={date} className="mb-5">
+          <h2 className="rule-b py-1.5 font-mincho text-heading font-bold text-ink">
+            {formatPaperDate(date)}
+          </h2>
+          <ul>
+            {racesOnDate.map((race) => (
+              <RaceRow
+                key={race.id}
+                race={race}
+                topPick={race.top_pick ?? topPicks[race.id]}
+              />
+            ))}
+          </ul>
+        </section>
+      ))}
+    </>
+  );
+}
+
 export default function Dashboard() {
   const { value, status, reload } = useResource<Race[]>('/races');
+  const [showAllResults, setShowAllResults] = useState(false);
   const races = value ?? [];
   const topPicks = useTopPicks(races);
+
+  const upcomingRaces = races.filter((race) => !isSettled(race));
+  const settledRaces = races.filter(isSettled);
+  const shownSettledRaces = showAllResults
+    ? settledRaces
+    : withinRecentResultWindow(settledRaces);
+  const shownCount = upcomingRaces.length + shownSettledRaces.length;
 
   return (
     <div>
@@ -126,7 +228,7 @@ export default function Dashboard() {
         <p className="text-caption text-ink-weak">
           {status === 'ready' && races.length > 0 ? (
             <>
-              掲載 <span className="tabular-nums">{races.length}</span> レース
+              掲載 <span className="tabular-nums">{shownCount}</span> レース
             </>
           ) : (
             '週末の重賞と本紙の見解を載せています'
@@ -160,22 +262,30 @@ export default function Dashboard() {
         </div>
       )}
 
-      {groupByDate(races).map(([date, racesOnDate]) => (
-        <section key={date} className="mb-5">
-          <h2 className="rule-b py-1.5 font-mincho text-heading font-bold text-ink">
-            {formatPaperDate(date)}
-          </h2>
-          <ul>
-            {racesOnDate.map((race) => (
-              <RaceRow
-                key={race.id}
-                race={race}
-                topPick={race.top_pick ?? topPicks[race.id]}
-              />
-            ))}
-          </ul>
-        </section>
-      ))}
+      {upcomingRaces.length > 0 && (
+        <>
+          {settledRaces.length > 0 && (
+            <p className="mb-1 text-caption text-ink-weak">今週の番組</p>
+          )}
+          <RaceDateGroups races={upcomingRaces} topPicks={topPicks} />
+        </>
+      )}
+
+      {settledRaces.length > 0 && (
+        <>
+          <p className="mb-1 text-caption text-ink-weak">結果</p>
+          <RaceDateGroups races={shownSettledRaces} topPicks={topPicks} />
+          {shownSettledRaces.length < settledRaces.length && (
+            <button
+              type="button"
+              className="btn-paper"
+              onClick={() => setShowAllResults(true)}
+            >
+              過去の結果をさらに表示
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
