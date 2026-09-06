@@ -722,7 +722,11 @@ class NetkeibaScraper(BaseScraper):
             race_link = cells[race_name_idx].find("a", href=True)
             if race_link:
                 href = race_link.get("href", "")
-                rid_m = re.search(r"(?:race_id=|/race/)(\d+)", href)
+                # 海外レースには英字も含まれる（例: 2026H1a00709）。
+                # 数字だけを拾うと同年の別レースが同一IDに切り詰められる。
+                rid_m = re.search(
+                    r"(?:race_id=|/race/)([A-Za-z0-9]{12})(?=[/?&#]|$)", href
+                )
                 if rid_m:
                     race_id = rid_m.group(1)
 

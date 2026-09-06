@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
-from app.models import Entry, Horse, Prediction, Race
+from app.models import Entry, Horse, Prediction, Race, Result
 from app.services.fetch_service import FetchService
 from tests.factories import make_entry, make_horse, make_race
 
@@ -23,6 +23,29 @@ from tests.factories import make_entry, make_horse, make_race
 # （本番の get_target_race_dates も常に当日以降を返す）
 _TARGET_DATE = date.today() + timedelta(days=7)
 _RACE_ID = "202604280811"  # "08" = 京都
+
+
+def test_repeated_results_are_idempotent_without_autoflush(db):
+    """本番同様にautoflushを無効にして、同一取得内・再取得の重複を検証。"""
+    horse = make_horse(db, horse_id="2020190007")
+    races = [
+        make_race(db, race_id="2026H1010105"),
+        make_race(db, race_id="2026H1a00709"),
+    ]
+    db.flush()
+    results = [
+        {"race_id": race.id, "finish_position": index + 1}
+        for index, race in enumerate(races)
+    ]
+    service = FetchService(db)
+    with db.no_autoflush:
+        service._persist_horse_results(horse.id, results + results)
+        service._persist_horse_results(horse.id, results)
+    saved = db.query(Result).filter_by(horse_id=horse.id).all()
+    assert {row.race_id: row.finish_position for row in saved} == {
+        races[0].id: 1,
+        races[1].id: 2,
+    }
 
 
 def _make_graded_races() -> list[dict]:

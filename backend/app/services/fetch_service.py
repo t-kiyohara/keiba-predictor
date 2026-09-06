@@ -547,6 +547,9 @@ class FetchService:
                     jockey_name=res.get("jockey_name") or None,
                 )
                 self.db.add(new_result)
+                # 本番はautoflush=False。同じ成績が再登場しても次の検索で
+                # 検出できるよう、追加分をDBへ反映する（commitは呼び出し元）。
+                self.db.flush()
 
         self.db.flush()
 

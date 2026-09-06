@@ -44,6 +44,8 @@ def init_db() -> None:
         return
 
     alembic_config = Config(str(_ALEMBIC_INI_PATH))
+    # アプリからの実行では呼び出し元のログ設定を維持する。
+    alembic_config.attributes["configure_logger"] = False
     alembic_config.set_main_option(
         "script_location", str(_ALEMBIC_INI_PATH.parent / "alembic")
     )

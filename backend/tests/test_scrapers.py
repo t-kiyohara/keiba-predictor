@@ -973,6 +973,18 @@ class TestNetkeibaFetchHorseResults:
         assert result[0]["course_type"] == "芝"
         assert result[0]["distance"] == 3200
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("link_prefix", ["/race/", "/?race_id="])
+    async def test_overseas_race_ids_are_not_truncated(self, link_prefix):
+        html = HORSE_RESULTS_HTML.replace(
+            "/race/202409020511/", f"{link_prefix}2026H1010105/"
+        ).replace("/race/202405050905/", f"{link_prefix}2026H1a00709/")
+        scraper = NetkeibaScraper()
+        with patch.object(scraper, "fetch", new=AsyncMock(return_value=html)):
+            results = await scraper.fetch_horse_results("2020190007")
+        assert results[0]["race_id"] == "2026H1010105"
+        assert results[1]["race_id"] == "2026H1a00709"
+
 
 # ---------------------------------------------------------------------------
 # FetchService 永続化テスト
